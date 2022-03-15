@@ -45,7 +45,7 @@ class Autoencoder(nn.Module):
             nn.Linear(250, 30),
             nn.Tanh())
 
-        self.decoder = nn.Sequential(             
+        self.decoder = nn.Sequential(
             nn.Linear(30,250),
             nn.Tanh(),
             nn.Linear(250,500),
@@ -54,14 +54,14 @@ class Autoencoder(nn.Module):
             nn.Tanh(),
             nn.Linear(1000, 784),
             nn.Tanh())
-        
+
         # self.encoder = nn.Sequential(
         #     nn.Conv2d(1, 6, kernel_size=5),
         #     nn.ReLU(True),
         #     nn.Conv2d(6,16,kernel_size=5),
         #     nn.ReLU(True))
 
-        # self.decoder = nn.Sequential(             
+        # self.decoder = nn.Sequential(
         #     nn.ConvTranspose2d(16,6,kernel_size=5),
         #     nn.ReLU(True),
         #     nn.ConvTranspose2d(6,1,kernel_size=5),
@@ -76,16 +76,19 @@ class Autoencoder(nn.Module):
 
 # Defining Parameters
 
-num_epochs = 5
+num_epochs = 300
 model = Autoencoder().to(device)
 distance = nn.MSELoss()
 # optimizer = torch.optim.Adam(model.parameters(),weight_decay=1e-5)
 optimizer = Shampoo(model.parameters(), lr=0.01)
 debug = False
+tot_size=0
 if debug:
     num_epochs=1
 for epoch in range(num_epochs):
+    model.train()
     loss_total=0
+    tot_size=0
     for data in dataloader:
         img, _ = data
         img = Variable(img).to(device)
@@ -104,6 +107,20 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        loss_total+=loss.item()
+        loss_total+=loss.item()*img.size(0)
+        tot_size+=img.size(0)
     # ===================log========================
-    print('epoch [{}/{}], loss_total:{:.4f}, loss:{:.4f}'.format(epoch+1, num_epochs, loss_total, loss.item()))
+    print('epoch [{}/{}], loss_total:{:.4f}, loss:{:.4f}'.format(epoch+1, num_epochs, loss_total/tot_size, loss.item()))
+    print("Evaluation TEST Set:")
+    model.eval()
+    loss_total=0
+    tot_size=0
+    for data in testloader:
+        img, _ = data
+        img = Variable(img).to(device)
+        output = model(img.view(img.size(0), -1))
+        loss = distance(output.view(img.size(0), 1, 28, 28), img)
+        loss_total+=loss.item()*img.size(0)
+        tot_size+=img.size(0)
+    print('test_loss_total:{:.4f}'.format(loss_total/tot_size))
+
