@@ -15,7 +15,7 @@
 
 """Pytorch implementation of Shampoo."""
 
-from __future__ import print_function
+# from __future__ import print_function
 
 import enum
 import itertools
@@ -25,7 +25,8 @@ import matrix_functions
 import numpy as np
 import torch
 import torch.optim as optim
-
+import py_quic
+import torch.linalg
 
 # Grafting is a technique to fix the layerwise scale of Shampoo optimizer.
 # https://arxiv.org/pdf/2002.11803.pdf studies this in detail. This
@@ -43,13 +44,13 @@ class ShampooHyperParams:
   """Shampoo hyper parameters."""
   beta2: float = 1.0
   diagonal_eps: float = 1e-6
-  matrix_eps: float = 1e-12
+  matrix_eps: float = 1e-6
   weight_decay: float = 0.0
   inverse_exponent_override: int = 0  # fixed exponent for preconditioner, if >0
   start_preconditioning_step: int = 1
   # Performance tuning params for controlling memory and compute requirements.
   # How often to compute preconditioner.
-  preconditioning_compute_steps: int = 1
+  preconditioning_compute_steps: int = 20
   # How often to compute statistics.
   statistics_compute_steps: int = 1
   # Block size for large layers (if > 0).
@@ -65,6 +66,12 @@ class ShampooHyperParams:
   graft_type: int = LayerwiseGrafting.SGD
   # Nesterov momentum
   nesterov: bool = True
+  quic = False
+  ## quic params
+  nondiagRegul = True ## regularization only on non-diagonal elements or everything
+  quicInit = "invdiag" ## "invdiag" (X0=inv(diag(S))) | "inv" (X0=inv(S))
+  quicIters = 10
+  quicLambda = 0.5
 
 
 class Graft:
@@ -91,7 +98,7 @@ class SGDGraft(Graft):
 
   def __init__(self, hps, var):
     super(SGDGraft, self).__init__(hps, var)
-    self.momentum = torch.zeros_like(var.data, device=var.get_device())
+    self.momentum = torch.zeros_like(var.data, device=var.device)
 
   def update_momentum(self, update, beta1):
     self.momentum.mul_(beta1).add_(update)
@@ -105,7 +112,7 @@ class AdagradGraft(SGDGraft):
 
   def __init__(self, hps, var):
     super(AdagradGraft, self).__init__(hps, var)
-    self.statistics = torch.zeros_like(var.data, device=var.get_device())
+    self.statistics = torch.zeros_like(var.data, device=var.device)
 
   def add_statistics(self, grad):
     self.statistics.add_(grad * grad)
@@ -220,7 +227,7 @@ class Preconditioner:
     self._partitioner = BlockPartitioner(reshaped_var, hps)
     shapes = self._partitioner.shapes_for_preconditioners()
     rank = len(self._transformed_shape)
-    device = var.get_device()
+    device = var.device
     if rank <= 1:
       self.statistics = []
       self.preconditioners = []
@@ -260,6 +267,47 @@ class Preconditioner:
       self.preconditioners[i] = matrix_functions.ComputePower(
           stat, exp, ridge_epsilon=eps)
 
+  def compute_preconditioners_quic(self):
+    """Compute L^{-1/exp} for each stats matrix L."""
+    exp = self.exponent_for_preconditioner()
+    eps = self._hps.matrix_eps
+    print(len(self.statistics))
+    for i, stat in enumerate(self.statistics):
+      # find pth root of the stat
+      stateigvals = torch.linalg.eigvalsh(stat)
+      minstateigvals = stateigvals.min()
+      epsnew = 5* torch.abs(minstateigvals)
+      print("epsnew:",epsnew)
+      
+      print('largest, smallest eigvals',stateigvals.max(),stateigvals.min(),stateigvals.max()/stateigvals.min())
+      statreg = stat+epsnew*torch.eye(stat.shape[0], device=stat.device).type(stat.type())
+      statpth, statinvpth = matrix_functions.pthroots(statreg, exp)
+      print('statpth',statpth)
+      print('statreg',statreg)
+
+      if self._hps.nondiagRegul:
+        lamMat = self._hps.quicLambda*(np.ones(statpth.shape)-np.diag(np.ones(statpth.shape[0])))
+      else:
+          lamMat = self._hps.quicLambda*(np.ones(statpth.shape))
+      lamMat = lamMat.astype(np.float64)
+
+      print(lamMat)
+
+      if self._hps.quicInit == "invdiag":
+        npstatpth = statpth.detach().numpy().astype(np.float64)
+        X0 = np.diag(1/np.diag(npstatpth))
+        W0 = np.diag(npstatpth)
+        X, W, opt, cputime, iters, dGap = py_quic.quic(S=statpth.detach().numpy().astype(np.float64), L=lamMat,
+                                                        max_iter=self._hps.quicIters, X0=X0, W0=W0.detach().numpy().astype(np.float64), msg=2)
+      elif self._hps.quicInit == "inv":
+        X, W, opt, cputime, iters, dGap = py_quic.quic(S=statpth.detach().numpy().astype(np.float64), L=lamMat,
+                                                        max_iter=self._hps.quicIters, X0=statinvpth.detach().numpy().astype(np.float64), W0=statpth.detach().numpy().astype(np.float64), msg=2)
+      else:
+        raise NotImplementedError
+
+      X = torch.from_numpy(X).to(statpth.device).type(statpth.type())
+      print(X, torch.isnan(X).sum())
+      self.preconditioners[i] = X
   def preconditioned_grad(self, grad):
     """Precondition the gradient.
     Args:
@@ -308,7 +356,7 @@ class Shampoo(optim.Optimizer):
   def init_var_state(self, var, state):
     """Initialize the PyTorch state of for a single variable."""
     state[STEP] = 0
-    state[MOMENTUM] = torch.zeros_like(var.data, device=var.get_device())
+    state[MOMENTUM] = torch.zeros_like(var.data, device=var.device)
     state[PRECONDITIONER] = Preconditioner(var, self.hps)
     if self.hps.graft_type == LayerwiseGrafting.ADAGRAD:
       state[GRAFT] = AdagradGraft(self.hps, var)
@@ -339,7 +387,11 @@ class Shampoo(optim.Optimizer):
         if state[STEP] % hps.statistics_compute_steps == 0:
           preconditioner.add_statistics(grad)
         if state[STEP] % hps.preconditioning_compute_steps == 0:
-          preconditioner.compute_preconditioners()
+          print('param shape', p.grad.data.size())
+          if not self.hps.quic:
+            preconditioner.compute_preconditioners()
+          else:
+            preconditioner.compute_preconditioners_quic()
 
         # Precondition gradients
         graft_grad = graft.precondition_gradient(grad)
