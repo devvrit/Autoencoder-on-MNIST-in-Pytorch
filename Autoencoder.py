@@ -163,3 +163,6 @@ plt.xlabel("epochs")
 plt.ylabel("test_loss")
 #plt.title("Shampoo optimizer")
 plt.savefig("test_loss.png")
+
+print("train_loss: " + str(train_loss))
+print("test_loss: " + str(test_loss))

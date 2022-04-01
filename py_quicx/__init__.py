@@ -132,8 +132,9 @@ def quic(S, L, mode="default", tol=1e-5, max_iter=1000, X0=None, W0=None,\
     py_quic.quic(mode.encode('utf-8'), Sn, S, _L, pathLen, path, tol, msg, max_iter,\
             X, W, opt, cputime, iters, dGap)
 
-    print("opt: " + str(opt))
-    print("dGap: " + str(dGap))
+    if msg>0:
+        print("opt: " + str(opt))
+        print("dGap: " + str(dGap))
     if optSize == 1:
         opt = opt[0]
         cputime = cputime[0]

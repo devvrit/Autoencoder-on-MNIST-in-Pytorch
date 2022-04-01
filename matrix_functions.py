@@ -135,7 +135,7 @@ def ComputePower(mat_g, p,
 def pthroots(mat,p):
     assert p>0
     D, V = torch.linalg.eigh(mat)
-    print(D[D<0],torch.isnan(V).sum())
+    #print(D[D<0],torch.isnan(V).sum())
     Dpth = torch.pow(D, 1/p)
     matp = (V * Dpth) @ V.T
     invmatp = (V * (1/Dpth)) @ V.T

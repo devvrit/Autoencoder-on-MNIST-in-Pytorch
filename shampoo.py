@@ -44,13 +44,13 @@ class ShampooHyperParams:
   """Shampoo hyper parameters."""
   beta2: float = 1.0
   diagonal_eps: float = 1e-6
-  matrix_eps: float = 1e-6
+  matrix_eps: float = 1e-12
   weight_decay: float = 0.0
   inverse_exponent_override: int = 0  # fixed exponent for preconditioner, if >0
   start_preconditioning_step: int = 1
   # Performance tuning params for controlling memory and compute requirements.
   # How often to compute preconditioner.
-  preconditioning_compute_steps: int = 20
+  preconditioning_compute_steps: int = 1
   # How often to compute statistics.
   statistics_compute_steps: int = 1
   # Block size for large layers (if > 0).
@@ -271,17 +271,17 @@ class Preconditioner:
     """Compute L^{-1/exp} for each stats matrix L."""
     exp = self.exponent_for_preconditioner()
     eps = self._hps.matrix_eps
-    print(len(self.statistics))
+    #print("len(self.statistics) is: " + str(len(self.statistics)))
     for i, stat in enumerate(self.statistics):
       # find pth root of the stat
       stateigvals = torch.linalg.eigvalsh(stat)
       minstateigvals = stateigvals.min()
       epsnew = 5* torch.abs(minstateigvals)
-      print("state shape: " + str(stat.size()))
-      print("epsnew:",epsnew)
+      #print("state shape: " + str(stat.size()))
+      #print("epsnew:",epsnew)
       #print("exp:",exp)
       
-      print('largest, smallest eigvals',stateigvals.max(),stateigvals.min(),stateigvals.max()/stateigvals.min())
+      #print('largest, smallest eigvals',stateigvals.max(),stateigvals.min(),stateigvals.max()/stateigvals.min())
       statreg = stat+epsnew*torch.eye(stat.shape[0], device=stat.device).type(stat.type())
       statpth, statinvpth = matrix_functions.pthroots(statreg, exp)
       #print('statpth',statpth)
@@ -301,7 +301,7 @@ class Preconditioner:
         X0 = np.diag(1/np.diag(npstatpth))
         W0 = np.diag(np.diag(npstatpth))
         X, W, opt, cputime, iters, dGap = py_quic.quic(S=statpth.detach().numpy().astype(np.float64), L=lamMat,
-                                                        max_iter=self._hps.quicIters, X0=X0, W0=W0, msg=2)
+                                                        max_iter=self._hps.quicIters, X0=X0, W0=W0, msg=0)
       elif self._hps.quicInit == "inv":
         X, W, opt, cputime, iters, dGap = py_quic.quic(S=statpth.detach().numpy().astype(np.float64), L=lamMat,
                                                         max_iter=self._hps.quicIters, X0=statinvpth.detach().numpy().astype(np.float64), W0=statpth.detach().numpy().astype(np.float64), msg=2)
@@ -309,7 +309,7 @@ class Preconditioner:
         raise NotImplementedError
 
       X = torch.from_numpy(X).to(statpth.device).type(statpth.type())
-      print(torch.isnan(X).sum(), flush=True)
+      #print(torch.isnan(X).sum(), flush=True)
       self.preconditioners[i] = X
   def preconditioned_grad(self, grad):
     """Precondition the gradient.
