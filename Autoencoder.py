@@ -58,8 +58,10 @@ class Autoencoder(nn.Module):
             nn.Tanh())
 
         self.decoder = nn.Sequential(
+
             torch.manual_seed(7)
             nn.Linear(30, 250),
+
             nn.Tanh(),
             torch.manual_seed(8)
             nn.Linear(250, 500),
@@ -72,8 +74,7 @@ class Autoencoder(nn.Module):
             torch.manual_seed(10)
             nn.Linear(1000, 784))
 
-    def forward(self, x):
-
+    def forward(self,x):
         x = self.encoder(x)
         x = self.decoder(x)
         return x
@@ -95,15 +96,12 @@ optimizer = Shampoo(model.parameters(), lr=0.01)
 
 debug = False
 
-
-tot_size = 0
-
+tot_size=0
 if debug:
 
     num_epochs = 1
 
 for epoch in range(num_epochs):
-
     model.train()
     loss_total = 0
     tot_size = 0
