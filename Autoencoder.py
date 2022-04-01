@@ -7,8 +7,8 @@ import torch.nn as nn
 import torchvision.transforms as transforms
 import torchvision as tv
 import torch
-%load_ext autoreload
-%autoreload
+#%load_ext autoreload
+#%autoreload
 
 
 warnings.filterwarnings("ignore")
@@ -41,37 +41,31 @@ class Autoencoder(nn.Module):
     def __init__(self):
         super(Autoencoder, self).__init__()
 
+        torch.manual_seed(3)
         self.encoder = nn.Sequential(
-            torch.manual_seed(3)
             nn.Linear(784, 1000),
             nn.Tanh(),
-            torch.manual_seed(4)
+            
             nn.Linear(1000, 500),
-
             nn.Tanh(),
-            torch.manual_seed(5)
+
             nn.Linear(500, 250),
             nn.Tanh(),
 
-            torch.manual_seed(6)
             nn.Linear(250, 30),
             nn.Tanh())
 
         self.decoder = nn.Sequential(
 
-            torch.manual_seed(7)
             nn.Linear(30, 250),
 
             nn.Tanh(),
-            torch.manual_seed(8)
             nn.Linear(250, 500),
 
             nn.Tanh(),
-            torch.manual_seed(9)
             nn.Linear(500, 1000),
 
             nn.Tanh(),
-            torch.manual_seed(10)
             nn.Linear(1000, 784))
 
     def forward(self,x):

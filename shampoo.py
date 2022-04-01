@@ -25,7 +25,7 @@ import matrix_functions
 import numpy as np
 import torch
 import torch.optim as optim
-import py_quic
+import py_quicx as py_quic
 import torch.linalg
 
 # Grafting is a technique to fix the layerwise scale of Shampoo optimizer.
