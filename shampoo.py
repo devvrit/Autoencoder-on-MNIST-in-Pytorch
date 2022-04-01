@@ -66,7 +66,7 @@ class ShampooHyperParams:
   graft_type: int = LayerwiseGrafting.SGD
   # Nesterov momentum
   nesterov: bool = True
-  quic = False
+  quic = True
   ## quic params
   nondiagRegul = True ## regularization only on non-diagonal elements or everything
   quicInit = "invdiag" ## "invdiag" (X0=inv(diag(S))) | "inv" (X0=inv(S))
@@ -277,13 +277,15 @@ class Preconditioner:
       stateigvals = torch.linalg.eigvalsh(stat)
       minstateigvals = stateigvals.min()
       epsnew = 5* torch.abs(minstateigvals)
+      print("state shape: " + str(stat.size()))
       print("epsnew:",epsnew)
+      #print("exp:",exp)
       
       print('largest, smallest eigvals',stateigvals.max(),stateigvals.min(),stateigvals.max()/stateigvals.min())
       statreg = stat+epsnew*torch.eye(stat.shape[0], device=stat.device).type(stat.type())
       statpth, statinvpth = matrix_functions.pthroots(statreg, exp)
-      print('statpth',statpth)
-      print('statreg',statreg)
+      #print('statpth',statpth)
+      #print('statreg',statreg)
 
       if self._hps.nondiagRegul:
         lamMat = self._hps.quicLambda*(np.ones(statpth.shape)-np.diag(np.ones(statpth.shape[0])))
@@ -291,14 +293,15 @@ class Preconditioner:
           lamMat = self._hps.quicLambda*(np.ones(statpth.shape))
       lamMat = lamMat.astype(np.float64)
 
-      print(lamMat)
+      #print(lamMat)
+      #assert lamMat.dtype is np.float64, lamMat.dtype
 
       if self._hps.quicInit == "invdiag":
         npstatpth = statpth.detach().numpy().astype(np.float64)
         X0 = np.diag(1/np.diag(npstatpth))
-        W0 = np.diag(npstatpth)
+        W0 = np.diag(np.diag(npstatpth))
         X, W, opt, cputime, iters, dGap = py_quic.quic(S=statpth.detach().numpy().astype(np.float64), L=lamMat,
-                                                        max_iter=self._hps.quicIters, X0=X0, W0=W0.detach().numpy().astype(np.float64), msg=2)
+                                                        max_iter=self._hps.quicIters, X0=X0, W0=W0, msg=2)
       elif self._hps.quicInit == "inv":
         X, W, opt, cputime, iters, dGap = py_quic.quic(S=statpth.detach().numpy().astype(np.float64), L=lamMat,
                                                         max_iter=self._hps.quicIters, X0=statinvpth.detach().numpy().astype(np.float64), W0=statpth.detach().numpy().astype(np.float64), msg=2)
@@ -306,7 +309,7 @@ class Preconditioner:
         raise NotImplementedError
 
       X = torch.from_numpy(X).to(statpth.device).type(statpth.type())
-      print(X, torch.isnan(X).sum())
+      print(torch.isnan(X).sum(), flush=True)
       self.preconditioners[i] = X
   def preconditioned_grad(self, grad):
     """Precondition the gradient.
