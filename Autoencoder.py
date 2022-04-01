@@ -77,7 +77,7 @@ class Autoencoder(nn.Module):
 
 # Defining Parameters
 
-num_epochs = 200
+num_epochs = 2
 
 model = Autoencoder().to(device)
 
@@ -86,7 +86,9 @@ distance = torch.nn.BCEWithLogitsLoss(
 
 
 # optimizer = torch.optim.Adam(model.parameters(),weight_decay=1e-5)
-optimizer = Shampoo(model.parameters(), lr=0.01)
+optimizer = Shampoo(model.parameters(), lr=0.001)
+train_loss = []
+test_loss = []
 
 debug = False
 
@@ -132,6 +134,7 @@ for epoch in range(num_epochs):
     # ===================log========================
     print('epoch [{}/{}], loss_total:{:.4f}, loss:{:.4f}'.format(epoch +
                                                                  1, num_epochs, loss_total/tot_size, loss.item()))
+    train_loss.append(loss_total/tot_size)
     print("Evaluation TEST Set:")
     model.eval()
     loss_total = 0
@@ -145,3 +148,18 @@ for epoch in range(num_epochs):
         loss_total += loss.item()*img.size(0)
         tot_size += img.size(0)
     print('test_loss_total:{:.4f}'.format(loss_total/tot_size))
+    test_loss.append(loss_total/tot_size)
+
+import matplotlib.pyplot as plt
+plt.plot([i for i in range(len(train_loss))], train_loss)
+plt.xlabel("epochs")
+plt.ylabel("train_loss")
+#plt.title("Shampoo optimizer")
+plt.savefig("train_loss.png")
+
+plt.clf()
+plt.plot([i for i in range(len(test_loss))], test_loss)
+plt.xlabel("epochs")
+plt.ylabel("test_loss")
+#plt.title("Shampoo optimizer")
+plt.savefig("test_loss.png")

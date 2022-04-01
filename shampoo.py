@@ -387,7 +387,7 @@ class Shampoo(optim.Optimizer):
         if state[STEP] % hps.statistics_compute_steps == 0:
           preconditioner.add_statistics(grad)
         if state[STEP] % hps.preconditioning_compute_steps == 0:
-          print('param shape', p.grad.data.size())
+          #print('param shape', p.grad.data.size())
           if not self.hps.quic:
             preconditioner.compute_preconditioners()
           else:
