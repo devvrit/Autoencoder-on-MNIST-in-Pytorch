@@ -77,7 +77,7 @@ class Autoencoder(nn.Module):
 
 # Defining Parameters
 
-num_epochs = 2
+num_epochs = 50
 
 model = Autoencoder().to(device)
 

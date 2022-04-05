@@ -66,11 +66,11 @@ class ShampooHyperParams:
   graft_type: int = LayerwiseGrafting.SGD
   # Nesterov momentum
   nesterov: bool = True
-  quic = True
+  quic = False
   ## quic params
   nondiagRegul = True ## regularization only on non-diagonal elements or everything
   quicInit = "invdiag" ## "invdiag" (X0=inv(diag(S))) | "inv" (X0=inv(S))
-  quicIters = 10
+  quicIters = 20
   quicLambda = 0.5
 
 
@@ -266,6 +266,8 @@ class Preconditioner:
     for i, stat in enumerate(self.statistics):
       self.preconditioners[i] = matrix_functions.ComputePower(
           stat, exp, ridge_epsilon=eps)
+      #eigvals = torch.linalg.eigvalsh(self.preconditioners[i])
+      #print("max and min eigenvals are: " + str(eigvals.max()) + ", " + str(eigvals.min()))
 
   def compute_preconditioners_quic(self):
     """Compute L^{-1/exp} for each stats matrix L."""
@@ -274,6 +276,11 @@ class Preconditioner:
     #print("len(self.statistics) is: " + str(len(self.statistics)))
     for i, stat in enumerate(self.statistics):
       # find pth root of the stat
+      L_p = matrix_functions.ComputePower(
+          stat, exp, ridge_epsilon=eps)
+      statinvpth, statpth = matrix_functions.pthroots(L_p, 1)
+      '''
+      stat = stat + 1e-6*torch.eye(stat.shape[0], device=stat.device).type(stat.type())
       stateigvals = torch.linalg.eigvalsh(stat)
       minstateigvals = stateigvals.min()
       epsnew = 5* torch.abs(minstateigvals)
@@ -284,6 +291,7 @@ class Preconditioner:
       #print('largest, smallest eigvals',stateigvals.max(),stateigvals.min(),stateigvals.max()/stateigvals.min())
       statreg = stat+epsnew*torch.eye(stat.shape[0], device=stat.device).type(stat.type())
       statpth, statinvpth = matrix_functions.pthroots(statreg, exp)
+      '''
       #print('statpth',statpth)
       #print('statreg',statreg)
 
@@ -304,7 +312,7 @@ class Preconditioner:
                                                         max_iter=self._hps.quicIters, X0=X0, W0=W0, msg=0)
       elif self._hps.quicInit == "inv":
         X, W, opt, cputime, iters, dGap = py_quic.quic(S=statpth.detach().numpy().astype(np.float64), L=lamMat,
-                                                        max_iter=self._hps.quicIters, X0=statinvpth.detach().numpy().astype(np.float64), W0=statpth.detach().numpy().astype(np.float64), msg=2)
+                                                        max_iter=self._hps.quicIters, X0=statinvpth.detach().numpy().astype(np.float64), W0=statpth.detach().numpy().astype(np.float64), msg=0)
       else:
         raise NotImplementedError
 
