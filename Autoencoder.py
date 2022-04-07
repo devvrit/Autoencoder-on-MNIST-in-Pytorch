@@ -1,4 +1,5 @@
 import warnings
+import argparse
 from shampoo import *
 from torchvision.utils import save_image
 from torch.autograd import Variable
@@ -34,6 +35,58 @@ testset = tv.datasets.MNIST(
     root='./data', train=False, download=True, transform=transform)
 testloader = torch.utils.data.DataLoader(
     testset, batch_size=4, shuffle=False, num_workers=1)
+
+
+
+parser = argparse.ArgumentParser(description='Autoencoder.py')
+parser.add_argument('--quic', action='store_true', help='need to use quic?')
+parser.add_argument('--Lambda', type=float, required=True, help='regularization prameter')
+parser.add_argument('--beta1', type=float, required=True, help='beta1')
+parser.add_argument('--beta2', type=float, required=True, help='beta2')
+parser.add_argument('--max_iter', type=int,  default=100, help='quic maximum iterations to run')
+parser.add_argument('--msg', type=int,  default=0, help='how much messages to print')
+parser.add_argument('--update', type=int,  default=1, help='compute precondition every x steps')
+parser.add_argument('--warmup', type=int,  default=0, help='linear warmup steps')
+parser.add_argument('--epochs', type=int,  required=True, help='num_epochs for training')
+parser.add_argument('--lr', type=float,  required=True, help='learning_rate')
+args = parser.parse_args()
+
+@dataclass
+class ShampooHyperParams:
+  """Shampoo hyper parameters."""
+  beta2: float = args.beta2
+  diagonal_eps: float = 1e-6
+  matrix_eps: float = 1e-12
+  weight_decay: float = 0.0
+  inverse_exponent_override: int = 0  # fixed exponent for preconditioner, if >0
+  start_preconditioning_step: int = 1
+  # Performance tuning params for controlling memory and compute requirements.
+  # How often to compute preconditioner.
+  preconditioning_compute_steps: int = args.update
+  # How often to compute statistics.
+  statistics_compute_steps: int = 1
+  # Block size for large layers (if > 0).
+  # Block size = 1 ==> Adagrad (Don't do this, extremely inefficient!)
+  # Block size should be as large as feasible under memory/time constraints.
+  block_size: int = 100000
+  # Automatic shape interpretation (for eg: [4, 3, 1024, 512] would result in
+  # 12 x [1024, 512] L and R statistics. Disabled by default which results in
+  # Shampoo constructing statistics [4, 4], [3, 3], [1024, 1024], [512, 512].
+  best_effort_shape_interpretation: bool = True
+  # Type of grafting (SGD or AdaGrad).
+  # https://arxiv.org/pdf/2002.11803.pdf
+  graft_type: int = LayerwiseGrafting.SGD
+  # Nesterov momentum
+  nesterov: bool = True
+  quic = args.quic
+  ## quic params
+  nondiagRegul = True ## regularization only on non-diagonal elements or everything
+  quicInit = "invdiag" ## "invdiag" (X0=inv(diag(S))) | "inv" (X0=inv(S))
+  quicIters = args.max_iter
+  quicLambda = args.Lambda
+
+
+
 
 
 class Autoencoder(nn.Module):
@@ -77,7 +130,7 @@ class Autoencoder(nn.Module):
 
 # Defining Parameters
 
-num_epochs = 50
+num_epochs = args.epochs
 
 model = Autoencoder().to(device)
 
@@ -86,21 +139,25 @@ distance = torch.nn.BCEWithLogitsLoss(
 
 
 # optimizer = torch.optim.Adam(model.parameters(),weight_decay=1e-5)
-optimizer = Shampoo(model.parameters(), lr=0.001)
+# shampooHps = ShampooHyperParams()
+optimizer = Shampoo(model.parameters(), momentum = args.beta1, hyperparams=ShampooHyperParams(), lr=args.lr)
 train_loss = []
 test_loss = []
+lrVec = np.concatenate([np.linspace(0,args.lr,args.warmup),np.linspace(lr,0,num_epochs-args.warmup+1)[1:]],axis=0)
 
 debug = False
 
 tot_size=0
 if debug:
-
     num_epochs = 1
 
 for epoch in range(num_epochs):
+    tLtrain = time.time()
     model.train()
     loss_total = 0
     tot_size = 0
+    for g in optimizer.param_groups:
+        g['lr'] = lrVec[epoch]
 
     numBatches = len(dataloader)
 
@@ -132,8 +189,8 @@ for epoch in range(num_epochs):
         tot_size += img.size(0)
         print('loss: {} iteration: {}/{}'.format(loss.item(), it, numBatches))
     # ===================log========================
-    print('epoch [{}/{}], loss_total:{:.4f}, loss:{:.4f}'.format(epoch +
-                                                                 1, num_epochs, loss_total/tot_size, loss.item()))
+    print('epoch [{}/{}], loss_total:{:.4f}, loss:{:.4f}'.format(epoch+1, num_epochs, loss_total/tot_size, loss.item()))
+    print('epoch ' + str(epoch) + ' train time: '+str(time.time()-tLtrain))
     train_loss.append(loss_total/tot_size)
     print("Evaluation TEST Set:")
     model.eval()

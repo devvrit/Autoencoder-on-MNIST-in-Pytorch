@@ -279,30 +279,12 @@ class Preconditioner:
       L_p = matrix_functions.ComputePower(
           stat, exp, ridge_epsilon=eps)
       statinvpth, statpth = matrix_functions.pthroots(L_p, 1)
-      '''
-      stat = stat + 1e-6*torch.eye(stat.shape[0], device=stat.device).type(stat.type())
-      stateigvals = torch.linalg.eigvalsh(stat)
-      minstateigvals = stateigvals.min()
-      epsnew = 5* torch.abs(minstateigvals)
-      #print("state shape: " + str(stat.size()))
-      #print("epsnew:",epsnew)
-      #print("exp:",exp)
-      
-      #print('largest, smallest eigvals',stateigvals.max(),stateigvals.min(),stateigvals.max()/stateigvals.min())
-      statreg = stat+epsnew*torch.eye(stat.shape[0], device=stat.device).type(stat.type())
-      statpth, statinvpth = matrix_functions.pthroots(statreg, exp)
-      '''
-      #print('statpth',statpth)
-      #print('statreg',statreg)
 
       if self._hps.nondiagRegul:
         lamMat = self._hps.quicLambda*(np.ones(statpth.shape)-np.diag(np.ones(statpth.shape[0])))
       else:
           lamMat = self._hps.quicLambda*(np.ones(statpth.shape))
       lamMat = lamMat.astype(np.float64)
-
-      #print(lamMat)
-      #assert lamMat.dtype is np.float64, lamMat.dtype
 
       if self._hps.quicInit == "invdiag":
         npstatpth = statpth.detach().numpy().astype(np.float64)
