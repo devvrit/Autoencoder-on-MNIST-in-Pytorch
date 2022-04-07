@@ -1,5 +1,6 @@
 import warnings
 import argparse
+import time
 from shampoo import *
 from torchvision.utils import save_image
 from torch.autograd import Variable
@@ -51,6 +52,9 @@ parser.add_argument('--epochs', type=int,  required=True, help='num_epochs for t
 parser.add_argument('--lr', type=float,  required=True, help='learning_rate')
 args = parser.parse_args()
 
+print("Args:")
+print(args)
+
 @dataclass
 class ShampooHyperParams:
   """Shampoo hyper parameters."""
@@ -79,6 +83,7 @@ class ShampooHyperParams:
   # Nesterov momentum
   nesterov: bool = True
   quic = args.quic
+  print("quic is: " + str(quic))
   ## quic params
   nondiagRegul = True ## regularization only on non-diagonal elements or everything
   quicInit = "invdiag" ## "invdiag" (X0=inv(diag(S))) | "inv" (X0=inv(S))
@@ -143,7 +148,8 @@ distance = torch.nn.BCEWithLogitsLoss(
 optimizer = Shampoo(model.parameters(), momentum = args.beta1, hyperparams=ShampooHyperParams(), lr=args.lr)
 train_loss = []
 test_loss = []
-lrVec = np.concatenate([np.linspace(0,args.lr,args.warmup),np.linspace(lr,0,num_epochs-args.warmup+1)[1:]],axis=0)
+lrVec = np.concatenate([np.linspace(0,args.lr,args.warmup),np.linspace(args.lr,0,num_epochs-args.warmup+1)[1:]],axis=0)
+# lrVec = np.concatenate([np.linspace(args.lr,args.lr,args.warmup),np.linspace(args.lr,args.lr,num_epochs-args.warmup+1)[1:]],axis=0)
 
 debug = False
 

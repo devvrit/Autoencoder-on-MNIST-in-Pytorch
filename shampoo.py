@@ -39,39 +39,39 @@ class LayerwiseGrafting(enum.IntEnum):
   ADAGRAD = 2
 
 
-@dataclass
-class ShampooHyperParams:
-  """Shampoo hyper parameters."""
-  beta2: float = 1.0
-  diagonal_eps: float = 1e-6
-  matrix_eps: float = 1e-12
-  weight_decay: float = 0.0
-  inverse_exponent_override: int = 0  # fixed exponent for preconditioner, if >0
-  start_preconditioning_step: int = 1
-  # Performance tuning params for controlling memory and compute requirements.
-  # How often to compute preconditioner.
-  preconditioning_compute_steps: int = 1
-  # How often to compute statistics.
-  statistics_compute_steps: int = 1
-  # Block size for large layers (if > 0).
-  # Block size = 1 ==> Adagrad (Don't do this, extremely inefficient!)
-  # Block size should be as large as feasible under memory/time constraints.
-  block_size: int = 100000
-  # Automatic shape interpretation (for eg: [4, 3, 1024, 512] would result in
-  # 12 x [1024, 512] L and R statistics. Disabled by default which results in
-  # Shampoo constructing statistics [4, 4], [3, 3], [1024, 1024], [512, 512].
-  best_effort_shape_interpretation: bool = True
-  # Type of grafting (SGD or AdaGrad).
-  # https://arxiv.org/pdf/2002.11803.pdf
-  graft_type: int = LayerwiseGrafting.SGD
-  # Nesterov momentum
-  nesterov: bool = True
-  quic = False
-  ## quic params
-  nondiagRegul = True ## regularization only on non-diagonal elements or everything
-  quicInit = "invdiag" ## "invdiag" (X0=inv(diag(S))) | "inv" (X0=inv(S))
-  quicIters = 20
-  quicLambda = 0.5
+# @dataclass
+# class ShampooHyperParams:
+#   """Shampoo hyper parameters."""
+#   beta2: float = 1.0
+#   diagonal_eps: float = 1e-6
+#   matrix_eps: float = 1e-12
+#   weight_decay: float = 0.0
+#   inverse_exponent_override: int = 0  # fixed exponent for preconditioner, if >0
+#   start_preconditioning_step: int = 1
+#   # Performance tuning params for controlling memory and compute requirements.
+#   # How often to compute preconditioner.
+#   preconditioning_compute_steps: int = 1
+#   # How often to compute statistics.
+#   statistics_compute_steps: int = 1
+#   # Block size for large layers (if > 0).
+#   # Block size = 1 ==> Adagrad (Don't do this, extremely inefficient!)
+#   # Block size should be as large as feasible under memory/time constraints.
+#   block_size: int = 100000
+#   # Automatic shape interpretation (for eg: [4, 3, 1024, 512] would result in
+#   # 12 x [1024, 512] L and R statistics. Disabled by default which results in
+#   # Shampoo constructing statistics [4, 4], [3, 3], [1024, 1024], [512, 512].
+#   best_effort_shape_interpretation: bool = True
+#   # Type of grafting (SGD or AdaGrad).
+#   # https://arxiv.org/pdf/2002.11803.pdf
+#   graft_type: int = LayerwiseGrafting.SGD
+#   # Nesterov momentum
+#   nesterov: bool = True
+#   quic = False
+#   ## quic params
+#   nondiagRegul = True ## regularization only on non-diagonal elements or everything
+#   quicInit = "invdiag" ## "invdiag" (X0=inv(diag(S))) | "inv" (X0=inv(S))
+#   quicIters = 20
+#   quicLambda = 0.5
 
 
 class Graft:
@@ -339,9 +339,9 @@ class Shampoo(optim.Optimizer):
 
   def __init__(self,
                params,
+               hyperparams,
                lr=1.0,
-               momentum=0.9,
-               hyperparams=ShampooHyperParams()):
+               momentum=0.9):
     defaults = dict(lr=lr, momentum=momentum)
     self.hps = hyperparams
     super(Shampoo, self).__init__(params, defaults)
