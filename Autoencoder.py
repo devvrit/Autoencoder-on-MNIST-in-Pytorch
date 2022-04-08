@@ -56,7 +56,7 @@ args = parser.parse_args()
 print("Args:")
 print(args)
 
-description="_reg_"+str(args.Lambda)+"_max_iter_"+str(args.max_iter)+"_warmup_"+str(args.warmup)
+description="_reg_"+str(args.Lambda)+"_max_iter_"+str(args.max_iter)+"_update_"+str(args.update)+"_warmup_"+str(args.warmup)+"_lr_"+str(args.lr)
 print("description: " + str(description))
 
 @dataclass
