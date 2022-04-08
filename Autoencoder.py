@@ -2,13 +2,14 @@ import warnings
 import argparse
 import time
 from shampoo import *
+import torch
 from torchvision.utils import save_image
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.nn as nn
 import torchvision.transforms as transforms
 import torchvision as tv
-import torch
+import matplotlib.pyplot as plt
 #%load_ext autoreload
 #%autoreload
 
@@ -54,6 +55,9 @@ args = parser.parse_args()
 
 print("Args:")
 print(args)
+
+description="_reg_"+str(args.Lambda)+"_max_iter_"+str(args.max_iter)+"_warmup_"+str(args.warmup)
+print("description: " + str(description))
 
 @dataclass
 class ShampooHyperParams:
@@ -157,6 +161,9 @@ tot_size=0
 if debug:
     num_epochs = 1
 
+size=[]
+denseness=[]
+
 for epoch in range(num_epochs):
     tLtrain = time.time()
     model.train()
@@ -191,9 +198,25 @@ for epoch in range(num_epochs):
 
         loss.backward()
         optimizer.step()
+        if epoch==0 and it==0:
+            for group in optimizer.param_groups:
+                for p in group['params']:
+                    state = optimizer.state[p]
+                    preconditioner = state['preconditioner']
+                    for i, stat in enumerate(preconditioner.statistics):
+                        size.append(stat.size(0))
+                        denseness.append([])
         loss_total += loss.item()*img.size(0)
         tot_size += img.size(0)
         print('loss: {} iteration: {}/{}'.format(loss.item(), it, numBatches))
+        # for group in optimizer.param_groups:
+        #     for p in group['params']:
+        #         state = optimizer.state[p]
+        #         preconditioner = state['preconditioner']
+        #         for i, stat in enumerate(preconditioner.statistics):
+        #             print("stat shape: " + str(stat.size()))
+        #             print("denseness: " + str(preconditioner.dense[i]))
+        #             print("avg. denseness: " + str(preconditioner.dense[i]/numBatches))
     # ===================log========================
     print('epoch [{}/{}], loss_total:{:.4f}, loss:{:.4f}'.format(epoch+1, num_epochs, loss_total/tot_size, loss.item()))
     print('epoch ' + str(epoch) + ' train time: '+str(time.time()-tLtrain))
@@ -213,19 +236,53 @@ for epoch in range(num_epochs):
     print('test_loss_total:{:.4f}'.format(loss_total/tot_size))
     test_loss.append(loss_total/tot_size)
 
-import matplotlib.pyplot as plt
-plt.plot([i for i in range(len(train_loss))], train_loss)
-plt.xlabel("epochs")
-plt.ylabel("train_loss")
-#plt.title("Shampoo optimizer")
-plt.savefig("train_loss.png")
+    plt.plot([i for i in range(len(train_loss))], train_loss)
+    plt.xlabel("epochs")
+    plt.ylabel("train_loss")
+    #plt.title("Shampoo optimizer")
+    plt.savefig("train_loss" + description + ".png")
 
-plt.clf()
-plt.plot([i for i in range(len(test_loss))], test_loss)
-plt.xlabel("epochs")
-plt.ylabel("test_loss")
-#plt.title("Shampoo optimizer")
-plt.savefig("test_loss.png")
+    plt.clf()
+    plt.plot([i for i in range(len(test_loss))], test_loss)
+    plt.xlabel("epochs")
+    plt.ylabel("test_loss")
+    #plt.title("Shampoo optimizer")
+    plt.savefig("test_loss" + description + ".png")
+
+    if args.quic:
+        num=0
+        for group in optimizer.param_groups:
+            for p in group['params']:
+                state = optimizer.state[p]
+                preconditioner = state['preconditioner']
+                for i, stat in enumerate(preconditioner.statistics):
+                    denseness[num].append(preconditioner.dense[i])
+                    num+=1
+                    # print("stat shape: " + str(stat.size()))
+                    # print("denseness: " + str(preconditioner.dense[i]))
+                    # print("avg. denseness: " + str(preconditioner.dense[i]/numBatches))
+        plt.clf()
+        plt.plot([i for i in range(len(denseness[0]))], denseness[0])
+        plt.xlabel("epochs")
+        plt.ylabel("denseness")
+        plt.savefig("denseness" + description + ".png")
+
+    torch.save(train_loss, "train_loss" + description + ".pt")
+    torch.save(test_loss, "test_loss" + description + ".pt")
+    torch.save(denseness, "denseness" + description + ".pt")
+
+# plt.plot([i for i in range(len(train_loss))], train_loss)
+# plt.xlabel("epochs")
+# plt.ylabel("train_loss")
+# #plt.title("Shampoo optimizer")
+# plt.savefig("train_loss.png")
+
+# plt.clf()
+# plt.plot([i for i in range(len(test_loss))], test_loss)
+# plt.xlabel("epochs")
+# plt.ylabel("test_loss")
+# #plt.title("Shampoo optimizer")
+# plt.savefig("test_loss.png")
 
 print("train_loss: " + str(train_loss))
 print("test_loss: " + str(test_loss))

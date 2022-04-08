@@ -231,10 +231,12 @@ class Preconditioner:
     if rank <= 1:
       self.statistics = []
       self.preconditioners = []
+      self.dense = []
     else:
       eps = self._hps.matrix_eps
       self.statistics = [eps * torch.eye(s[0], device=device) for s in shapes]
       self.preconditioners = [torch.eye(s[0], device=device) for s in shapes]
+      self.dense=[0 for s in shapes]
 
   def add_statistics(self, grad):
     """Compute statistics from gradients and add to the correct state entries.
@@ -299,8 +301,10 @@ class Preconditioner:
         raise NotImplementedError
 
       X = torch.from_numpy(X).to(statpth.device).type(statpth.type())
+      # print("percentage dense: " + str(1-sparse))
       #print(torch.isnan(X).sum(), flush=True)
       self.preconditioners[i] = X
+      self.dense[i] = 1 - ((X==0).sum()/(X.size(0)*X.size(0)))
   def preconditioned_grad(self, grad):
     """Precondition the gradient.
     Args:
@@ -360,6 +364,7 @@ class Shampoo(optim.Optimizer):
 
   def step(self, closure=None):
     hps = self.hps
+    dense=0
     for group in self.param_groups:
       lr = group['lr']
       for p in group['params']:
