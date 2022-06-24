@@ -13,6 +13,8 @@ import optax                           # Optimizers
 import tensorflow_datasets as tfds     # TFDS for MNIST
 from keras.datasets import mnist
 from typing import List
+from quic_numpy.tridiagFirstOrder import *
+from custom_optimizer import *
 
 
 flags.DEFINE_float('one_minus_beta1', 0.001, help='Beta1 for Adam')
@@ -54,7 +56,8 @@ class Autoencoder(nn.Module):
 
 def create_train_state(params, model, learning_rate):
   """Creates initial `TrainState`."""
-  tx = optax.inject_hyperparams(optax.sgd)(learning_rate)
+#   tx = optax.inject_hyperparams(optax.sgd)(learning_rate)
+  tx = optax.inject_hyperparams(tds)(learning_rate)
   # tx = optax.sgd(learning_rate)
   return train_state.TrainState.create(
       apply_fn=model.apply, params=params, tx=tx)
@@ -77,7 +80,7 @@ def eval_step(model, state, x):
   loss = optax.sigmoid_binary_cross_entropy(logits, x).mean(0).sum()
   return loss
 
-def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec, train_loss_val):
+def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec, train_loss_val=None):
   train_ds_size = len(train_ds)
   steps_per_epoch = train_ds_size // batch_size
   print("epoch:", epoch,"and lr going to be used:", lrVec[epoch])
@@ -96,7 +99,7 @@ def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec, train_los
   epoch_metrics_np = np.mean(batch_metrics_np)
 
   print('train epoch: %d, loss: %.4f' % (epoch, epoch_metrics_np))
-  train_loss_val.create_measurement(objective_value=epoch_metrics_np, step=epoch)
+  #train_loss_val.create_measurement(objective_value=epoch_metrics_np, step=epoch)
 
   return state
 
@@ -149,7 +152,7 @@ def main(argv):
 
   for i in range(num_epochs):
     rng, key = jax.random.split(rng)
-    state = train_epoch(state, model, train_inputs, FLAGS.batch_size, i, key, lrVec, train_loss_val)
+    state = train_epoch(state, model, train_inputs, FLAGS.batch_size, i, key, lrVec, train_loss_val=None)
     train_loss_val = eval_step(model, state, train_inputs)
     train_loss_val_.append(train_loss_val)
     print("epoch: " + str(i) +", train_loss_val: " + str(train_loss_val))
