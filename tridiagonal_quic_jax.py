@@ -61,8 +61,7 @@ def invTridiag(b,delt,d):
   n = d.shape[0]
 
   invd = jnp.concatenate([jnp.cumprod((d[1:]/delt[:-1])[::-1])[::-1],jnp.array([1],dtype=jnp.float32)])/delt[n-1]
-  inve = -b*jnp.concatenate(\
-          [jnp.cumprod((d[2:]/delt[:-2])[::-1])[::-1],jnp.array([1],dtype=jnp.float32)])/(delt[n-2]*delt[n-1])
+  inve = -b*jnp.concatenate([jnp.cumprod((d[2:]/delt[:-2])[::-1])[::-1],jnp.array([1],dtype=jnp.float32)])/(delt[n-2]*delt[n-1])
 
   return invd,inve
 
@@ -103,8 +102,8 @@ def LogDetDiff(Sd,Se,X1d,X1e,X2d,X2e):
 
   logdetX1 = jnp.sum(jnp.log(jnp.abs(luul(n,1,X1d,X1e,jnp.zeros((1,)).astype(jnp.float32),\
                                        jnp.zeros((n,)).astype(jnp.float32),True)[1])))
-  logdetX2 = jnp.sum(jnp.log(jnp.abs(luul(n,1,X2d,X2e,jnp.zeros((1,)).astype(jnp.float32),\                                                 
-                                       jnp.zeros((n,)).astype(jnp.float32),True)[1])))
+  logdetX2 = jnp.sum(jnp.log(jnp.abs(luul(n,1,X2d,X2e,jnp.zeros((1,)).astype(jnp.float32),\
+                                          jnp.zeros((n,)).astype(jnp.float32),True)[1])))
   trSX2X1 = Sd@(X2d-X1d)+2*Se@(X2e-X1e)
 
   return -logdetX2+logdetX1 + trSX2X1
