@@ -13,21 +13,21 @@ import optax                           # Optimizers
 import tensorflow_datasets as tfds     # TFDS for MNIST
 from keras.datasets import mnist
 from typing import List
-from quic_numpy.tridiagFirstOrder import *
 from custom_optimizer import *
 
 
-flags.DEFINE_float('one_minus_beta1', 0.001, help='Beta1 for Adam')
-flags.DEFINE_float('one_minus_beta2', 0.1, help='Beta2 for Adam')
-flags.DEFINE_float('lr', 0.001, help='Learning rate')
+flags.DEFINE_float('beta1', 0.9, help='Beta1 for Adam')
+flags.DEFINE_float('beta2', 0.999, help='Beta2 for Adam')
+flags.DEFINE_float('lr', 0.0001, help='Learning rate')
+flags.DEFINE_float('eps', 1e-8, help='eps')
 flags.DEFINE_integer('batch_size',
                      1000, help='Batch size.')
 flags.DEFINE_integer('model_size_multiplier',
                      1, help='Multiply model size by a constant')
 flags.DEFINE_integer('model_depth_multiplier',
                      1, help='Multiply model depth by a constant')
-flags.DEFINE_integer('warmup_epochs', 2, help='Warmup epochs')
-flags.DEFINE_integer('epochs', 4, help='#Epochs')
+flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
+flags.DEFINE_integer('epochs', 10, help='#Epochs')
 FLAGS = flags.FLAGS
 
 
@@ -57,7 +57,7 @@ class Autoencoder(nn.Module):
 def create_train_state(params, model, learning_rate):
   """Creates initial `TrainState`."""
 #   tx = optax.inject_hyperparams(optax.sgd)(learning_rate)
-  tx = optax.inject_hyperparams(tds)(learning_rate)
+  tx = optax.inject_hyperparams(tds)(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps)
   # tx = optax.sgd(learning_rate)
   return train_state.TrainState.create(
       apply_fn=model.apply, params=params, tx=tx)
