@@ -195,3 +195,29 @@ def GradDescent(Sd,Se,T = 10,sigma = 0.1):
     # print("")
 
   return Xd,Xe
+
+
+def ldl2tridiag(Lsub,D):
+  # n = D.shape[0]
+  Xd = jnp.zeros_like(D)
+  Xd = Xd.at[1:].set(D[1:]+Lsub*Lsub*D[:-1])
+  Xd = Xd.at[0].set(D[0])
+  Xe = Lsub*D[:-1]
+  return Xd,Xe
+
+# @jax.jit  
+def tridiagKFAC(Sd,Se):
+  # given diagonal-Sd and subdiagonal-Se
+  # find the inverse of pd completion of this tridiagonal matrix
+  # interms of Ldiag(D)L^T decomposition
+  # outputs Lsub and D, where Lsub-subdiagonal of L
+  
+  # n = Sd.shape[0]
+  psi = Se/Sd[1:]
+  condCov = jnp.zeros_like(Sd)
+  condCov = condCov.at[:-1].set(Sd[:-1]-psi**2*Sd[1:])
+  condCov = condCov.at[-1].set(Sd[-1])
+  # assert jnp.all(condCov!=0)
+  D = 1/(condCov+1e-12)
+  Lsub = -psi
+  return ldl2tridiag(Lsub,D)
