@@ -221,3 +221,183 @@ def tridiagKFAC(Sd,Se):
   D = 1/(condCov+1e-12)
   Lsub = -psi
   return ldl2tridiag(Lsub,D)
+
+
+
+def cg_batch(A_bmm, B, M_bmm=None, X0=None, rtol=1e-3, atol=0., maxiter=None, verbose=False):
+  ## replace this with https://gist.github.com/num3ric/1357315
+  '''Solves a batch of PD matrix linear systems using the preconditioned
+  CG algorithm.
+  This function solves a batch of matrix linear systems of the form
+      A_i X_i = B_i,  i=1,...,K,
+  where A_i is a n x n positive definite matrix and B_i is a n x m matrix,
+  and X_i is the n x m matrix representing the solution for the ith system.
+  Args:
+    A_bmm: A callable that performs a batch matrix multiply of A
+    and a K x n x m matrix.
+    B: A K x n x m matrix representing the right hand sides.
+    M_bmm: (optional) A callable that performs a batch matrix multiply
+    of the preconditioning matrices M
+    and a K x n x m matrix. (default=identity matrix)
+    X0: (optional) Initial guess for X, defaults to M_bmm(B). (default=None)
+    rtol: (optional) Relative tolerance for norm of residual. (default=1e-3)
+    atol: (optional) Absolute tolerance for norm of residual. (default=0)
+    maxiter: (optional) Maximum number of iterations to perform. (default=5*n)
+    verbose: (optional) Whether or not to print status messages. (default=False)
+  '''
+
+  K, n, m = B.shape
+
+  if M_bmm is None:
+    M_bmm = lambda x: x
+  if X0 is None:
+    X0 = M_bmm(B)
+  if maxiter is None:
+    maxiter = 5 * n
+
+  assert B.shape == (K, n, m)
+  assert X0.shape == (K, n, m)
+  assert rtol > 0 or atol > 0
+  assert isinstance(maxiter, int)
+
+  X_k = X0
+  R_k = B - A_bmm(X_k)
+  Z_k = M_bmm(R_k)
+
+  # P_k = torch.zeros_like(Z_k)
+  P_k = jnp.zeros_like(Z_k)
+
+  P_k1 = P_k
+  R_k1 = R_k
+  R_k2 = R_k
+  X_k1 = X0
+  Z_k1 = Z_k
+  Z_k2 = Z_k
+  
+  B_norm = jnp.linalg.norm(B, axis=1)
+  stopping_matrix = jnp.maximum(rtol*B_norm, atol*jnp.ones_like(B_norm))
+  
+  for k in range(1, maxiter + 1):
+    Z_k = M_bmm(R_k)
+    if k == 1:
+      P_k = Z_k
+      R_k1 = R_k
+      X_k1 = X_k
+      Z_k1 = Z_k
+    else:
+      R_k2 = R_k1
+      Z_k2 = Z_k1
+      P_k1 = P_k
+      R_k1 = R_k
+      Z_k1 = Z_k
+      X_k1 = X_k
+      denominator = jnp.sum(R_k2 * Z_k2, axis=1)
+      denominator = jnp.where(denominator==0, 1e-8, denominator)
+      # denominator = denominator.at[denominator==0].set(1e-8)
+      beta = jnp.sum(R_k1 * Z_k1, axis=1) / denominator
+      P_k = Z_k1 + jnp.expand_dims(beta, axis=1) * P_k1
+    AP_k = A_bmm(P_k)
+    denominator = jnp.sum(P_k * AP_k, axis=1)
+    denominator = jnp.where(denominator==0, 1e-8, denominator)
+    # denominator = denominator.at[denominator==0].set(1e-8)
+    alpha = jnp.sum(R_k1 * Z_k1, axis=1) / denominator
+    X_k = X_k1 + jnp.expand_dims(alpha, axis=1) * P_k
+    R_k = R_k1 - jnp.expand_dims(alpha, axis=1) * AP_k
+
+  if verbose:
+      print("%03s | %010s %06s" % ("it", "dist", "it/s"))
+
+  optimal = False
+  start = time.perf_counter()
+  for k in range(1, maxiter + 1):
+    start_iter = time.perf_counter()
+    Z_k = M_bmm(R_k)
+
+    if k == 1:
+      P_k = Z_k
+      R_k1 = R_k
+      X_k1 = X_k
+      Z_k1 = Z_k
+    else:
+      R_k2 = R_k1
+      Z_k2 = Z_k1
+      P_k1 = P_k
+      R_k1 = R_k
+      Z_k1 = Z_k
+      X_k1 = X_k
+      denominator = (R_k2 * Z_k2).sum(1)
+      denominator = jnp.where(denominator==0, 1e-8, denominator)
+      beta = (R_k1 * Z_k1).sum(1) / denominator
+      P_k = Z_k1 + jnp.expand_dims(beta, axis=1) * P_k1
+    AP_k = A_bmm(P_k)
+    denominator = (P_k * AP_k).sum(1)
+    denominator = jnp.where(denominator==0, 1e-8, denominator)
+    # denominator = denominator.at[denominator==0].set(1e-8)
+    alpha = (R_k1 * Z_k1).sum(1) / denominator
+    X_k = X_k1 + jnp.expand_dims(alpha, axis=1) * P_k
+    R_k = R_k1 - jnp.expand_dims(alpha, axis=1) * AP_k
+    end_iter = time.perf_counter()
+
+  info = {
+    "niter": k,
+    "optimal": optimal
+  }
+  return X_k, info
+
+
+
+def bandedInv(Sd,subDiags,ind,eps,innerIters):
+  # given diagonal-Sd and subdiagonals-subDiags
+  # find the inverse of pd completion of this banded matrix
+  # interms of Ldiag(D)L^T decomposition
+  # outputs Lsub and D, where Lsub-subdiagonals of L
+
+  n = Sd.shape[0]
+  b = subDiags.shape[1]
+
+  bandvecs = jnp.concatenate((Sd.reshape(-1,1), subDiags), axis=1)
+  indX,indY = ind
+  epsMat = jnp.zeros((b, b+1))
+  epsMat = epsMat.at[:,0].set(eps)
+  bandWindows = jnp.concatenate((bandvecs,epsMat), axis=0)
+  sig22 = bandWindows[indX[:,1:,1:],indY[:,1:,1:]]
+  sig21 = bandWindows[indX[:,1:,0],indY[:,1:,0]]
+
+  def A_bmm(X):
+    return jnp.matmul(sig22, X)
+
+  diagSig22 = jnp.diagonal(sig22, axis1=1, axis2=2)
+
+  def M_bmm(X):
+    return jnp.broadcast_to(jnp.expand_dims(1/diagSig22, axis=-1), X.shape)*X
+
+  psi,_ = cg_batch(A_bmm, jnp.expand_dims(sig21, axis=-1), M_bmm,
+                    maxiter=innerIters if innerIters!=-1 else 5*b, verbose=False)
+  psi = psi.squeeze(-1)
+
+  condCov = jnp.matmul(psi.reshape((n,1,b)), sig21.reshape((n,b,1)))
+  condCov = Sd - jnp.squeeze(jnp.squeeze(condCov, axis=-1), axis=-1)
+
+  D = 1/(condCov)
+
+  return psi,D
+
+
+
+def createInd(n,b):
+  b1 = b+1
+  offsetX = jnp.broadcast_to(jnp.expand_dims(jnp.arange(b1), axis=-1), (b1,b1))
+  print(offsetX)
+  print(jnp.transpose(jnp.triu(offsetX,1), (1,0)))
+  offsetX = jnp.triu(offsetX)+jnp.transpose(jnp.triu(offsetX,1), (1,0))
+  print(offsetX)
+
+  offsetY = jnp.array(scipy.linalg.toeplitz(np.arange(b1)))
+
+  indX = jnp.broadcast_to(jnp.expand_dims(jnp.expand_dims(jnp.arange(n), axis=-1), axis=-1), (n,b1,b1))
+  indY = jnp.broadcast_to(jnp.expand_dims(jnp.expand_dims(jnp.zeros(n, dtype=jnp.int32), axis=-1), axis=-1), (n,b1,b1))
+
+  indX = indX+jnp.expand_dims(offsetX, 0)
+  indY = indY+jnp.expand_dims(offsetY, 0)
+
+  return jnp.array([indX, indY])
