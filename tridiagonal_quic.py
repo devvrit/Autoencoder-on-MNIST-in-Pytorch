@@ -374,14 +374,24 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
   psi,_ = cg_batch(A_bmm, jnp.expand_dims(sig21, axis=-1), M_bmm,
                     maxiter=innerIters if innerIters!=-1 else 5*b, verbose=False)
   psi = psi.squeeze(-1)
-
-  condCov = jnp.matmul(psi.reshape((n,1,b)), sig21.reshape((n,b,1)))
-  condCov = Sd - jnp.squeeze(jnp.squeeze(condCov, axis=-1), axis=-1)
-
+  psiSig21 = jnp.matmul(psi.reshape((n,1,b)), sig21.reshape((n,b,1))).squeeze(-1).squeeze(-1)
+  condCov = Sd - psiSig21
+  faultyIdces = faultyInit[condCov==0.0]
+  idcesX = jnp.broadcast_to(jnp.expand_dims(faultyIdces, axis=-1), (faultyIdces.shape[0],b+1))
+  idcesY = idcesX-jnp.broadcast_to(jnp.expand_dims(jnp.arange(b+1), axis=0), (idcesX.shape[0],b+1))
+  idcesY = jnp.where(idcesY<0.0, 0, idcesY)
+  mask = maskInit
+  for i in range(b-1,-1,-1):
+    if i==(b-1):
+      mask = mask.at[idcesY, i].set(True)
+    else:
+      mask = mask.at[idcesY[:,:-(b-i-1)], i].set(True)
+  psi = jnp.where(mask, 0, psi)
+  mask = mask.at[:,:].set(False)
+  psiSig21 = jnp.matmul(psi.reshape((n,1,b)), sig21.reshape((n,b,1)))
+  condCov = Sd - psiSig21.squeeze(-1).squeeze(-1)
   D = 1/(condCov)
-
-  return psi,D
-
+  return psi, D
 
 
 def createInd(n,b):
