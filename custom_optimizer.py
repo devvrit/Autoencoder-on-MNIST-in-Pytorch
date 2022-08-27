@@ -4,6 +4,8 @@ import chex
 import jax
 import jax.numpy as jnp
 import optax
+import numpy as np
+import squic
 
 # from quic_numpy.tridiagFirstOrder import *
 import tridiagonal_quic
@@ -89,3 +91,62 @@ def tds(learning_rate: ScalarOrSchedule, b1=0.9, b2=0.99, eps=1e-8):
           b1=b1, b2=b2, eps=eps),
         alias._scale_by_learning_rate(learning_rate),
     )
+
+def squic_run(y, reg, m):
+  precond = squic.run(np.array(y),reg)
+  return jnp.array(precond.multiply(np.array(m))).reshape(-1)
+
+class PreconditionSquicState(NamedTuple):
+  count: chex.Array # shape=(), dtype=jnp.int32
+  mu: optax.Updates
+  nu_adam: optax.Updates
+  nu: optax.Updates
+
+def precondition_by_squic(beta1=0.9, beta2=0.99, eps=1e-8, reg=0.4,
+    num_grads=20, debias=True) -> optax.GradientTransformation:
+  
+  def init_fn(params):
+    return PreconditionSquicState(
+      count=jnp.zeros([], jnp.int32),
+      mu=jax.tree_map(jnp.zeros_like, params),
+      nu_adam=jax.tree_map(jnp.zeros_like, params),
+      nu=jax.tree_multimap(lambda g: jnp.zeros((len(g.reshape(-1)), num_grads)), params)
+    )
+  
+  def update_fn(updates, state, params):
+    updates_hat = jax.tree_multimap(lambda g: g.reshape(-1), updates)
+    mu = _update_moment(updates, state.mu, beta1, 1)
+    nu_adam = _update_moment(updates, state.nu_adam, beta2, 2)
+    count = state.count + jnp.array(1, dtype=jnp.int32)
+    nu = state.nu
+    nu = jax.tree_multimap(lambda g: g.at[:,:-1].set(g[:,1:]), nu)
+    nu = jax.tree_multimap(lambda g, h: g.at[:,-1].set(h), nu, updates_hat)
+
+    mu_hat = mu if not debias else _bias_correction(mu, beta1, count)
+    if count<num_grads:
+      nu_hat = nu_adam if not debias else _bias_correction(nu_adam, beta2, count)
+      updates = jax.tree_multimap(lambda m,n: m/(jnp.sqrt(n)+eps), mu_hat, nu_hat)
+      return updates, PreconditionSquicState(count=count, mu=mu, nu_adam=nu_adam, nu=nu)
+    
+    temp = jax.tree_multimap(lambda y, m: squic_run(y, reg, m), nu, mu_hat)
+    updates = jax.tree_multimap(lambda t, m: t.reshape(m.shape), temp, updates)
+    return updates, PreconditionSquicState(count=count, mu=mu, nu_adam=nu_adam, nu=nu)
+
+  return optax.GradientTransformation(init_fn, update_fn)
+
+
+    
+  
+
+def squic(learning_rate: ScalarOrSchedule,
+          beta1=0.9,
+          beta2=0.99,
+          eps=1e-8,
+          reg=0.4,
+          num_grads=20,
+          debias=True):
+  return combine.chain(
+    precondition_by_squic(
+      beta1=beta1, beta2=beta2, eps=eps, reg=reg, num_grads=num_grads, debias=debias),
+    optax.scale_by_learning_rate(learning_rate),
+  )
