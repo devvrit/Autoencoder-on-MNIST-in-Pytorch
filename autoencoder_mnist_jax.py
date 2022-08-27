@@ -28,6 +28,7 @@ flags.DEFINE_integer('model_depth_multiplier',
                      1, help='Multiply model depth by a constant')
 flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
 flags.DEFINE_integer('epochs', 10, help='#Epochs')
+flags.DEFINE_integer('num_grads', 20, help='#gradients to use for squic')
 FLAGS = flags.FLAGS
 
 
@@ -94,7 +95,7 @@ def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec, train_los
     train_x = train_ds[perm]
     state, loss = train_step(model, state, train_x)
     batch_metrics.append(loss)
-  
+
   batch_metrics_np = jax.device_get(batch_metrics)
   epoch_metrics_np = np.mean(batch_metrics_np)
 
