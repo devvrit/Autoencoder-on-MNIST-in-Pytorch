@@ -10,7 +10,7 @@ from functools import partial
 from absl import flags
 import numpy as np                     # Ordinary NumPy
 import optax                           # Optimizers
-import tensorflow_datasets as tfds     # TFDS for MNIST
+#import tensorflow_datasets as tfds     # TFDS for MNIST
 from keras.datasets import mnist
 from typing import List
 from custom_optimizer import *
@@ -29,6 +29,7 @@ flags.DEFINE_integer('model_depth_multiplier',
 flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
 flags.DEFINE_integer('epochs', 10, help='#Epochs')
 flags.DEFINE_integer('num_grads', 20, help='#gradients to use for squic')
+flags.DEFINE_float('reg', 0.4, help='regularization for squic')
 FLAGS = flags.FLAGS
 
 
@@ -57,8 +58,9 @@ class Autoencoder(nn.Module):
 
 def create_train_state(params, model, learning_rate):
   """Creates initial `TrainState`."""
-#   tx = optax.inject_hyperparams(optax.sgd)(learning_rate)
-  tx = optax.inject_hyperparams(tds)(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps)
+  #tx = optax.inject_hyperparams(optax.sgd)(learning_rate)
+  #tx = optax.inject_hyperparams(tds)(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps)
+  tx = optax.inject_hyperparams(squic_opt)(learning_rate, beta1=FLAGS.beta1, beta2=FLAGS.beta2, eps=FLAGS.eps, reg=FLAGS.reg, num_grads=FLAGS.num_grads)
   # tx = optax.sgd(learning_rate)
   return train_state.TrainState.create(
       apply_fn=model.apply, params=params, tx=tx)

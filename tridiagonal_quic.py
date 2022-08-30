@@ -376,6 +376,19 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
   psi = psi.squeeze(-1)
   psiSig21 = jnp.matmul(psi.reshape((n,1,b)), sig21.reshape((n,b,1))).squeeze(-1).squeeze(-1)
   condCov = Sd - psiSig21
+  condCovFail = (condCov==0.0).reshape((-1,1))
+  condCovFail = jnp.broadcast_to(condCovFail, (condCovFail.shape[0], b))
+  for i in range(1,b):
+    condCovFail = condCovFail.at[:-(i+1),i].set(jnp.logical_or(condCovFail[:-(i+1),i], condCovFail[(i+1):,0]))
+  
+  condCovFail = condCovFail.at[:-1,0].set(jnp.logical_or(condCovFail[:-1,0], condCovFail[1:,0]))
+  print("condCovFail:", condCovFail)
+  psi = jnp.where(condCovFail, 0.0, psi)
+  psiSig21 = jnp.matmul(psi.reshape((n,1,b)), sig21.reshape((n,b,1)))
+  condCov = Sd - psiSig21.squeeze(-1).squeeze(-1)
+  D = 1/(condCov)
+  return psi, D
+  '''
   faultyIdces = faultyInit[condCov==0.0]
   idcesX = jnp.broadcast_to(jnp.expand_dims(faultyIdces, axis=-1), (faultyIdces.shape[0],b+1))
   idcesY = idcesX-jnp.broadcast_to(jnp.expand_dims(jnp.arange(b+1), axis=0), (idcesX.shape[0],b+1))
@@ -392,7 +405,7 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
   condCov = Sd - psiSig21.squeeze(-1).squeeze(-1)
   D = 1/(condCov)
   return psi, D
-
+  '''
 
 def createInd(n,b):
   b1 = b+1
