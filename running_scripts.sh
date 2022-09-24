@@ -1,1 +1,1 @@
-python autoencoder_mnist_jax.py --beta1 9.00193e-1 --beta2 9.72396e-1 --eps 3.35397e-6 --dtype float32 --lr 4.62512e-5
+# shampoo float32 t=20 optimal hyperparamspython autoencoder_mnist_jax.py --beta1 9.00055e-1 --beta2 9.50822e-1 --eps 9.66177e-9 --dtype float32 --lr 3.70288e-3 --t 20# tds bfloat16 optimal hyperparams:#python autoencoder_mnist_jax.py --beta1 9.00193e-1 --beta2 9.72396e-1 --eps 3.35397e-6 --dtype bfloat16 --lr 4.62512e-5

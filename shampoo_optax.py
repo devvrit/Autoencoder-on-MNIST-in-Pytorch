@@ -46,8 +46,8 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from scalable_shampoo.optax.quantization_utils import QuantizedValue
-from scalable_shampoo.optax.symmetric_matrices import symmetric_matrices
+from quantization_utils import QuantizedValue
+from symmetric_matrices import symmetric_matrices
 
 # Dtype for inverse-pth root routine
 # Switch to f64 if you have hardware that supports it. Enable the jax flag

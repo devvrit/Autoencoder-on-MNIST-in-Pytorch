@@ -98,7 +98,7 @@ def get_optimizer(opt, learning_rate):
       best_effort_shape_interpretation=True,
       graft_type=4,
       nesterov=False,
-      best_effort_memory_usage_reduction=True,
+      best_effort_memory_usage_reduction=False,
       inverse_failure_threshold=0.1,
       moving_average_for_momentum=True,
       skip_preconditioning_dim_size_gt=4096,
@@ -170,6 +170,7 @@ def main(argv):
   else:
       raise NotImplementedError
 
+  print("dtype is:", dtype)
   #Generate data
   (train_inputs, _), (test_inputs, test_labels) = mnist.load_data()
   train_inputs = jnp.array(train_inputs).astype(jnp.float32)
