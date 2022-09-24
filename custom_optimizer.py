@@ -23,7 +23,7 @@ class PreconditionTriDiagonalState(NamedTuple):
     
 def _update_moment(updates, moments, decay, order):
   """Compute the exponential moving average of the `order-th` moment."""
-  return jax.tree_multimap(lambda g, t: (1 - decay) * (g**order) + decay * t,
+  return jax.tree_map(lambda g, t: (1 - decay) * (g**order) + decay * t,
                            updates, moments)
 
 def _bias_correction(moment, decay, count):
@@ -33,9 +33,9 @@ def _bias_correction(moment, decay, count):
 
 def _update_nu(updates, nu_e, nu_d, beta2):
   """Compute the exponential moving average of the tridiagonal structure of the moment."""
-  nu_d = jax.tree_multimap(lambda g, t: (1-beta2) * (g**2) + beta2 * t,
+  nu_d = jax.tree_map(lambda g, t: (1-beta2) * (g**2) + beta2 * t,
                            updates, nu_d)
-  nu_e = jax.tree_multimap(lambda g, t: (1-beta2) * (g[:-1]*g[1:]) + beta2 * t,
+  nu_e = jax.tree_map(lambda g, t: (1-beta2) * (g[:-1]*g[1:]) + beta2 * t,
                            updates, nu_e)
   return nu_e, nu_d
 
@@ -53,11 +53,11 @@ def precondition_by_tds(
     return PreconditionTriDiagonalState(
         count=jnp.zeros([], jnp.int32),
         mu = jax.tree_map(jnp.zeros_like, params),
-        nu_e=jax.tree_multimap(lambda g: jnp.zeros(len(g.reshape(-1))-1, dtype=g.dtype), params),
-        nu_d=jax.tree_multimap(lambda g: jnp.zeros(len(g.reshape(-1)), dtype=g.dtype), params))
+        nu_e=jax.tree_map(lambda g: jnp.zeros(len(g.reshape(-1))-1, dtype=g.dtype), params),
+        nu_d=jax.tree_map(lambda g: jnp.zeros(len(g.reshape(-1)), dtype=g.dtype), params))
   
   def update_fn(updates, state, params):
-    updates_hat = jax.tree_multimap(lambda g: g.T.reshape(-1) if transpose else g.reshape(-1), updates)
+    updates_hat = jax.tree_map(lambda g: g.T.reshape(-1) if transpose else g.reshape(-1), updates)
     mu = _update_moment(updates, state.mu, b1, 1)
     nu_e, nu_d = _update_nu(updates_hat, state.nu_e, state.nu_d, b2)
     count = state.count + jnp.array(1, dtype=jnp.int32)
@@ -65,11 +65,11 @@ def precondition_by_tds(
     nu_hat_e = nu_e if not debias else _bias_correction(nu_e, b2, count)
     nu_hat_d = nu_d if not debias else _bias_correction(nu_d, b2, count)
 
-    temp = jax.tree_multimap(lambda d, e:
+    temp = jax.tree_map(lambda d, e:
                              tridiagonal_quic.tridiagKFAC(d,e, eps),
                              nu_hat_d, nu_hat_e)
-    pre_d = jax.tree_multimap(lambda h, g: g[0], nu_hat_d, temp)
-    pre_e = jax.tree_multimap(lambda h, g: g[1], nu_hat_d, temp)
+    pre_d = jax.tree_map(lambda h, g: g[0], nu_hat_d, temp)
+    pre_e = jax.tree_map(lambda h, g: g[1], nu_hat_d, temp)
     mu_hat_flat = jax.tree_map(lambda m: m.T.reshape(-1)
                                     if transpose else m.reshape(-1), mu_hat)
     # Multiply gradient with diagonal
@@ -91,9 +91,9 @@ def precondition_by_tds(
     #       lambda u, au: (jnp.linalg.norm(au)/(jnp.linalg.norm(u))+1e-12) * u,
     #       updates, adam_updates)
 
-    # mu_hat_flat = jax.tree_multimap(lambda m: jnp.append(jnp.append(0.0, m.reshape(-1)),0.0), mu_hat)
-    # pre_e = jax.tree_multimap(lambda g: jnp.append(jnp.append(0.0, g), 0.0), pre_e)
-    # updates = jax.tree_multimap(lambda mf, m, a, b:
+    # mu_hat_flat = jax.tree_map(lambda m: jnp.append(jnp.append(0.0, m.reshape(-1)),0.0), mu_hat)
+    # pre_e = jax.tree_map(lambda g: jnp.append(jnp.append(0.0, g), 0.0), pre_e)
+    # updates = jax.tree_map(lambda mf, m, a, b:
     #                             (mf[:-2]*a[:-1] + mf[1:-1]*b + mf[2:]*a[1:]).reshape(m.shape),
     #                             mu_hat_flat, mu_hat, pre_e, pre_d)
     return updates, PreconditionTriDiagonalState(count=count, mu=mu, nu_e=nu_e,
