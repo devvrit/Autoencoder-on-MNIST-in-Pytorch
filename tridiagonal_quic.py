@@ -2,7 +2,7 @@ import time
 import jax
 import jax.numpy as jnp
 
-
+'''
 def tridiagGeneral(el,d,eu):
   #Create a general tridiagonal matrix out of diagonal d and side diagonal e.
   n = d.shape[0]
@@ -195,7 +195,7 @@ def GradDescent(Sd,Se,T = 10,sigma = 0.1):
     # print("")
 
   return Xd,Xe
-
+'''
 
 def ldl2tridiag(Lsub,D):
   # n = D.shape[0]
@@ -206,19 +206,23 @@ def ldl2tridiag(Lsub,D):
   return Xd,Xe
 
 # @jax.jit  
-def tridiagKFAC(Sd,Se):
+def tridiagKFAC(Sd,Se, eps):
   # given diagonal-Sd and subdiagonal-Se
   # find the inverse of pd completion of this tridiagonal matrix
   # interms of Ldiag(D)L^T decomposition
   # outputs Lsub and D, where Lsub-subdiagonal of L
   
   # n = Sd.shape[0]
+  Sd = Sd+eps
   psi = Se/Sd[1:]
   condCov = jnp.zeros_like(Sd)
-  condCov = condCov.at[:-1].set(Sd[:-1]-psi**2*Sd[1:])
+  condCov = condCov.at[:-1].set(Sd[:-1]-Se*(Se/Sd[1:]))
   condCov = condCov.at[-1].set(Sd[-1])
-  # assert jnp.all(condCov!=0)
-  D = 1/(condCov+1e-12)
+  D = 1/(condCov)
+  mask1 = condCov[:-1]<1e-10
+  mask2 = condCov < 1e-10
+  psi = jnp.where(mask1, 0, psi)
+  d = jnp.where(mask2, 1/Sd, D)
   Lsub = -psi
   return ldl2tridiag(Lsub,D)
 
