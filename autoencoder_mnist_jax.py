@@ -16,10 +16,10 @@ from typing import List
 from custom_optimizer import *
 
 
-flags.DEFINE_float('beta1', 0.9, help='Beta1 for Adam')
-flags.DEFINE_float('beta2', 0.999, help='Beta2 for Adam')
-flags.DEFINE_float('lr', 0.0001, help='Learning rate')
-flags.DEFINE_float('eps', 1e-8, help='eps')
+flags.DEFINE_float('beta1', 9.54923e-1, help='Beta1 for Adam')
+flags.DEFINE_float('beta2', 9.79452e-1, help='Beta2 for Adam')
+flags.DEFINE_float('lr', 2.26020e-5, help='Learning rate')
+flags.DEFINE_float('eps', 6.75970e-07, help='eps')
 flags.DEFINE_integer('batch_size',
                      1000, help='Batch size.')
 flags.DEFINE_integer('model_size_multiplier',
@@ -27,7 +27,7 @@ flags.DEFINE_integer('model_size_multiplier',
 flags.DEFINE_integer('model_depth_multiplier',
                      1, help='Multiply model depth by a constant')
 flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
-flags.DEFINE_integer('epochs', 10, help='#Epochs')
+flags.DEFINE_integer('epochs', 100, help='#Epochs')
 flags.DEFINE_integer('num_grads', 20, help='#gradients to use for squic')
 flags.DEFINE_float('reg', 0.4, help='regularization for squic')
 FLAGS = flags.FLAGS
@@ -36,20 +36,25 @@ FLAGS = flags.FLAGS
 class Autoencoder(nn.Module):
   enc_hidden_states: List[int]
   dec_hidden_states: List[int]
+  dtype: Any
+  param_dtype: Any
 
   @nn.compact
   def __call__(self, x):
     for i in range(len(self.enc_hidden_states)):
       x = nn.Dense(features = self.enc_hidden_states[i],
-                   kernel_init=jnn.initializers.glorot_uniform())(x)
+                   kernel_init=jnn.initializers.glorot_uniform(),
+                   dtype=self.dtype, param_dtype=self.param_dtype)(x)
       if i<len(self.enc_hidden_states)-1:
         x = nn.tanh(x)
     for i in range(len(self.dec_hidden_states)):
       x = nn.Dense(features = self.dec_hidden_states[i],
-                   kernel_init=jnn.initializers.glorot_uniform())(x)
+                   kernel_init=jnn.initializers.glorot_uniform(),
+                   dtype=self.dtype, param_dtype=self.param_dtype)(x)
       x = nn.tanh(x)
     x = nn.Dense(features = 784,
-                 kernel_init=jnn.initializers.glorot_uniform())(x)
+                 kernel_init=jnn.initializers.glorot_uniform(),
+                 dtype=self.dtype, param_dtype=self.param_dtype)(x)
     return x
 
   def __hash__(self):
@@ -60,13 +65,13 @@ def create_train_state(params, model, learning_rate):
   """Creates initial `TrainState`."""
   #tx = optax.inject_hyperparams(optax.sgd)(learning_rate)
   #tx = optax.inject_hyperparams(tds)(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps)
-  tx = optax.inject_hyperparams(squic_opt)(learning_rate, beta1=FLAGS.beta1, beta2=FLAGS.beta2, eps=FLAGS.eps, reg=FLAGS.reg, num_grads=FLAGS.num_grads)
+  tx = optax.inject_hyperparams(tds)(learning_rate, beta1=FLAGS.beta1, beta2=FLAGS.beta2, eps=FLAGS.eps, transpose=True)
   # tx = optax.sgd(learning_rate)
   return train_state.TrainState.create(
       apply_fn=model.apply, params=params, tx=tx)
 
 # Training epoch
-# @partial(jax.jit, static_argnums=0)
+@partial(jax.jit, static_argnums=0)
 def train_step(model, state, x):
   def loss_fn(params):
     logits = model.apply(params, x)
@@ -77,11 +82,11 @@ def train_step(model, state, x):
   state = state.apply_gradients(grads=grads)
   return state, loss
 
-# @partial(jax.jit, static_argnums=0)
+@partial(jax.jit, static_argnums=0)
 def eval_step(model, state, x):
   logits = model.apply(state.params, x)
-  loss = optax.sigmoid_binary_cross_entropy(logits, x).mean(0).sum()
-  return loss
+  loss = optax.sigmoid_binary_cross_entropy(logits, x)
+  return loss.astype(jnp.float32).mean(0).sum()
 
 def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec, train_loss_val=None):
   train_ds_size = len(train_ds)
@@ -96,12 +101,12 @@ def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec, train_los
   for perm in perms:
     train_x = train_ds[perm]
     state, loss = train_step(model, state, train_x)
-    batch_metrics.append(loss)
+    batch_metrics.append(loss.item())
 
   batch_metrics_np = jax.device_get(batch_metrics)
   epoch_metrics_np = np.mean(batch_metrics_np)
 
-  print('train epoch: %d, loss: %.4f' % (epoch, epoch_metrics_np))
+  print('train epoch: %d, loss: %.4f' % (epoch, epoch_metrics_np), "dtype:", epoch_metrics_np.dtype)
   #train_loss_val.create_measurement(objective_value=epoch_metrics_np, step=epoch)
 
   return state
@@ -119,9 +124,13 @@ def main(argv):
   train_inputs = train_inputs.astype(jnp.float32)
   test_inputs = test_inputs.astype(jnp.float32)
 
+  float_type = jnp.float32
   # Rescale input images to [0, 1]
   train_inputs = jnp.reshape(train_inputs, [-1, 784]) / 255.0
   test_inputs = jnp.reshape(test_inputs, [-1, 784]) / 255.0
+    
+  train_inputs = train_inputs.astype(float_type)
+  test_inputs = test_inputs.astype(float_type)
 
   num_train_examples = train_inputs.shape[0]
   num_test_examples = test_inputs.shape[0]
@@ -139,6 +148,7 @@ def main(argv):
   encoder_decoder_sizes = encoder_sizes, decoder_sizes
 
   input_image_batch = np.random.normal(size=(batch_size,784))
+  input_image_batch = jnp.array(input_image_batch).astype(float_type)
 
   #Set learning rate schedule array
   num_epochs = FLAGS.epochs
@@ -147,9 +157,10 @@ def main(argv):
   lrVec = np.concatenate([np.linspace(0,lr,warmup_epochs),
                           np.linspace(lr,0,num_epochs-warmup_epochs+2)[1:-1]],
                          axis=0)
+  lrVec = jnp.array(lrVec).astype(float_type)
 
   train_loss_val_=[]
-  model = Autoencoder(encoder_sizes, decoder_sizes)
+  model = Autoencoder(encoder_sizes, decoder_sizes, dtype=float_type, param_dtype=float_type)
   params = model.init(key3, input_image_batch)
   state = create_train_state(params, model, FLAGS.lr)
 
