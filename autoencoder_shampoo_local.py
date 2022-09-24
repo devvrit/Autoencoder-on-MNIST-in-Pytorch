@@ -2897,20 +2897,6 @@ def distributed_shampoo(
 #   'rmsprop', 'tds', 'shampoo', 'diag_sonew'], help='optimizer')
 # FLAGS = flags.FLAGS
 
-# FLAGS = {
-#   "batch_size": 1000,
-#   "beta1": 0.8126116224612959,
-#   "beta2": 0.753645569541739,
-#   "epochs": 100,
-#   "eps": 0.00024290302185404512,
-#   "logger_levels": {},
-#   "lr": 0.004601239547952695,
-#   "model_depth_multiplier": 1,
-#   "model_size_multiplier": 1,
-#   "optimizer": "distributed_shampoo",
-#   "t": 80,
-#   "warmup_epochs": 5
-# }
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--beta1', type=float, default=0.8126116224612959, help='beta1')
@@ -2927,6 +2913,15 @@ parser.add_argument('--optimizer', type=str, default="shampoo", help="optimizer"
 parser.add_argument('--dtype', type=str, default="float32", help="float32 or bfloat16")
 
 FLAGS = parser.parse_args(args=[])
+
+mode=0
+if mode==1:
+  FLAGS.beta1 = 9.00055e-1
+  FLAGS.beta2 = 9.50822e-1
+  FLAGS.lr = 3.70288e-3
+  FLAGS.eps = 9.66177e-9
+  FLAGS.t = 20
+
 
 
 class Autoencoder(nn.Module):
