@@ -9,7 +9,7 @@ def tridiagGeneral(el,d,eu):
 
   dindices = jnp.stack([jnp.arange(n),jnp.arange(n)],axis=0)
   uIndices = jnp.stack([jnp.arange(n-1),jnp.arange(n-1)],axis=0)
-  uIndices[1]+=1 # 0 -> x axis # 1 -> y axis 
+  uIndices[1]+=1 # 0 -> x axis # 1 -> y axis
   lIndices = jnp.stack([jnp.arange(n-1),jnp.arange(n-1)],axis=0)
   lIndices[0]+=1
 
@@ -26,7 +26,7 @@ def tridiag(d,e):
   dindices = jnp.stack([jnp.arange(n),jnp.arange(n)],axis=0)
   uIndices = jnp.stack([jnp.arange(n-1),jnp.arange(n-1)],axis=0)
 
-  uIndices[1]+=1 # 0 -> x axis # 1 -> y axis 
+  uIndices[1]+=1 # 0 -> x axis # 1 -> y axis
   lIndices = jnp.stack([jnp.arange(n-1),jnp.arange(n-1)],axis=0)
 
   lIndices[0]+=1
@@ -37,14 +37,14 @@ def tridiag(d,e):
   A = A.at[lIndices[0],lIndices[1]].set(e)
 
   return A
-  
+
 
 def mat2Tridiag(M):
   n = M.shape[0]
   dindices = jnp.stack([jnp.arange(n),jnp.arange(n)],axis=0)
   uIndices = jnp.stack([jnp.arange(n-1),jnp.arange(n-1)],axis=0)
 
-  uIndices[1]+=1 # 0 -> x axis # 1 -> y axis 
+  uIndices[1]+=1 # 0 -> x axis # 1 -> y axis
 
   lIndices = jnp.stack([jnp.arange(n-1),jnp.arange(n-1)],axis=0)
   lIndices[0]+=1
@@ -54,7 +54,7 @@ def mat2Tridiag(M):
   return Md,Me
 
 def invTridiag(b,delt,d):
-    
+
   #W_i,i = d_i+1...d_n*1/delt_i...delt_n  i= 1 to n-1; W_n,n = 1/delt_n
   #W_i,i+1 = b_i+1 * d_i+2 ...d_n/delt_i...delt_n i = 1 to n-2; W_n-1,n = b_n/delt_n-1 delt_n
 
@@ -205,13 +205,13 @@ def ldl2tridiag(Lsub,D):
   Xe = Lsub*D[:-1]
   return Xd,Xe
 
-# @jax.jit  
+# @jax.jit
 def tridiagKFAC(Sd,Se, eps):
   # given diagonal-Sd and subdiagonal-Se
   # find the inverse of pd completion of this tridiagonal matrix
   # interms of Ldiag(D)L^T decomposition
   # outputs Lsub and D, where Lsub-subdiagonal of L
-  
+
   # n = Sd.shape[0]
   Sd = Sd+eps
   psi = Se/Sd[1:]
@@ -222,7 +222,7 @@ def tridiagKFAC(Sd,Se, eps):
   mask1 = condCov[:-1]<1e-10
   mask2 = condCov < 1e-10
   psi = jnp.where(mask1, 0, psi)
-  d = jnp.where(mask2, 1/Sd, D)
+  D = jnp.where(mask2, 1/Sd, D)
   Lsub = -psi
   return ldl2tridiag(Lsub,D)
 
@@ -277,10 +277,10 @@ def cg_batch(A_bmm, B, M_bmm=None, X0=None, rtol=1e-3, atol=0., maxiter=None, ve
   X_k1 = X0
   Z_k1 = Z_k
   Z_k2 = Z_k
-  
+
   B_norm = jnp.linalg.norm(B, axis=1)
   stopping_matrix = jnp.maximum(rtol*B_norm, atol*jnp.ones_like(B_norm))
-  
+
   for k in range(1, maxiter + 1):
     Z_k = M_bmm(R_k)
     if k == 1:

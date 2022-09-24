@@ -29,7 +29,7 @@ flags.DEFINE_integer('model_size_multiplier',
 flags.DEFINE_integer('model_depth_multiplier',
                      1, help='Multiply model depth by a constant')
 flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
-flags.DEFINE_integer('epochs', 10, help='#Epochs')
+flags.DEFINE_integer('epochs', 100, help='#Epochs')
 flags.DEFINE_integer('t', 20, help='preconditioner computation frequency')
 flags.DEFINE_enum('dtype', 'float32', ['float32', 'bfloat16'], help='dtype')
 flags.DEFINE_enum('optimizer', 'tds', ['sgd', 'momentum', 'nesterov', 'adagrad',
@@ -109,7 +109,7 @@ def create_train_state(params, model, opt, learning_rate):
       apply_fn=model.apply, params=params, tx=tx)
 
 # Training epoch
-# @partial(jax.jit, static_argnums=0)
+@partial(jax.jit, static_argnums=0)
 def train_step(model, state, x):
   def loss_fn(params):
     logits = model.apply(params, x)
@@ -120,7 +120,7 @@ def train_step(model, state, x):
   state = state.apply_gradients(grads=grads)
   return state, loss
 
-# @partial(jax.jit, static_argnums=0)
+@partial(jax.jit, static_argnums=0)
 def eval_step(model, state, x):
   logits = model.apply(state.params, x)
   loss = optax.sigmoid_binary_cross_entropy(logits, x)
@@ -130,7 +130,7 @@ def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec):
   train_ds_size = len(train_ds)
   steps_per_epoch = train_ds_size // batch_size
   print("epoch:", epoch,"and lr going to be used:", lrVec[epoch])
-  state.opt_state.hyperparams['learning_rate']=lrVec[epoch]
+  #state.opt_state.hyperparams['learning_rate']=lrVec[epoch]
 
   perms = jax.random.permutation(rng, train_ds_size)
   perms = perms[:steps_per_epoch * batch_size]  # skip incomplete batch
@@ -139,6 +139,7 @@ def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec):
   for perm in perms:
     train_x = train_ds[perm]
     state, loss = train_step(model, state, train_x)
+    print("loss:", loss, loss.dtype)
     batch_metrics.append(loss.item())
 
   batch_metrics_np = jax.device_get(batch_metrics)
