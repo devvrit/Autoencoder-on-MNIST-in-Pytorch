@@ -15,7 +15,7 @@ from keras.datasets import mnist
 from typing import (Any, List)
 #from custom_optimizer import *
 import custom_optimizer as custom_optimizer
-#import shampoo_jax as shampoo_jax
+import shampoo_jax as shampoo_jax
 
 
 flags.DEFINE_float('beta1', 0.9, help='Beta1')
@@ -32,7 +32,7 @@ flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
 flags.DEFINE_integer('epochs', 100, help='#Epochs')
 flags.DEFINE_integer('t', 20, help='preconditioner computation frequency')
 flags.DEFINE_enum('dtype', 'float32', ['float32', 'bfloat16'], help='dtype')
-flags.DEFINE_enum('optimizer', 'tds', ['sgd', 'momentum', 'nesterov', 'adagrad',
+flags.DEFINE_enum('optimizer', 'shampoo', ['sgd', 'momentum', 'nesterov', 'adagrad',
   'rmsprop', 'tds', 'shampoo', 'diag_sonew'], help='optimizer')
 FLAGS = flags.FLAGS
 

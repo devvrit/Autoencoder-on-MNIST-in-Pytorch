@@ -1,1 +1,1 @@
-python autoencoder_mnist_jax.py --beta1 9.00193e-1 --beta2 9.72396e-1 --eps 3.35397e-6 --dtype bfloat16 --lr 4.62512e-5
+python autoencoder_mnist_jax.py --beta1 9.00193e-1 --beta2 9.72396e-1 --eps 3.35397e-6 --dtype float32 --lr 4.62512e-5
