@@ -10,11 +10,12 @@ from functools import partial
 from absl import flags
 import numpy as np                     # Ordinary NumPy
 import optax                           # Optimizers
-import tensorflow_datasets as tfds     # TFDS for MNIST
+#import tensorflow_datasets as tfds     # TFDS for MNIST
 from keras.datasets import mnist
 from typing import (Any, List)
-from custom_optimizer import *
-import shampoo_jax as shampoo_jax
+#from custom_optimizer import *
+import custom_optimizer as custom_optimizer
+#import shampoo_jax as shampoo_jax
 
 
 flags.DEFINE_float('beta1', 0.9, help='Beta1')
@@ -30,9 +31,9 @@ flags.DEFINE_integer('model_depth_multiplier',
 flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
 flags.DEFINE_integer('epochs', 10, help='#Epochs')
 flags.DEFINE_integer('t', 20, help='preconditioner computation frequency')
-flags.DEFINE_enum('dtype', 'float32', ['float32', 'bfloat16'])
-flags.DEFINE_enum('optimizer', 'shampoo', ['sgd', 'momentum', 'nesterov', 'adagrad',
-  'rmsprop', 'tds', 'shampoo', 'diag_sonew'])
+flags.DEFINE_enum('dtype', 'float32', ['float32', 'bfloat16'], help='dtype')
+flags.DEFINE_enum('optimizer', 'tds', ['sgd', 'momentum', 'nesterov', 'adagrad',
+  'rmsprop', 'tds', 'shampoo', 'diag_sonew'], help='optimizer')
 FLAGS = flags.FLAGS
 
 
@@ -68,9 +69,9 @@ def get_optimizer(opt, learning_rate):
   print("using optimizer:", opt)
   if opt=="sgd":
     return optax.sgd(learning_rate)
-  elif opt="momentum":
+  elif opt=="momentum":
     return optax.sgd(learning_rate=learning_rate, momentum=FLAGS.beta1)
-  elif opt="nesterov":
+  elif opt=="nesterov":
     return optax.sgd(learning_rate=learning_rate, momentum=FLAGS.beta1, nesterov=True)
   elif opt=="adam":
     return optax.adam(b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps, learning_rate=learning_rate)
@@ -98,8 +99,10 @@ def get_optimizer(opt, learning_rate):
                        nesterov=False,
                        exponent_override=0,
                        batch_axis_name=None)
+  else:
+      raise NotImplementedError
 
-def create_train_state(params, model, learning_rate):
+def create_train_state(params, model, opt, learning_rate):
   """Creates initial `TrainState`."""
   tx = get_optimizer(opt, learning_rate)
   return train_state.TrainState.create(
@@ -137,7 +140,7 @@ def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec):
     train_x = train_ds[perm]
     state, loss = train_step(model, state, train_x)
     batch_metrics.append(loss.item())
-  
+
   batch_metrics_np = jax.device_get(batch_metrics)
   epoch_metrics_np = np.mean(batch_metrics_np)
 
@@ -154,10 +157,12 @@ def main(argv):
   rng, key3 = jax.random.split(rng)
 
   #Get dtype
-  if FLAGS.dtype=="floa32":
+  if FLAGS.dtype=="float32":
     dtype = jnp.float32
-  elif FLAGS.dype=="bfloat16":
+  elif FLAGS.dtype=="bfloat16":
     dtype = jnp.bfloat16
+  else:
+      raise NotImplementedError
 
   #Generate data
   (train_inputs, _), (test_inputs, test_labels) = mnist.load_data()
@@ -206,7 +211,7 @@ def main(argv):
   train_loss_val_=[]
   model = Autoencoder(encoder_sizes, decoder_sizes, dtype=dtype, param_dtype=dtype)
   params = model.init(key3, input_image_batch)
-  state = create_train_state(params, model, autoencoder_shedule(lrVec))
+  state = create_train_state(params, model, FLAGS.optimizer, autoencoder_shedule(lrVec))
   print("Initialized model and optimizer!")
 
   for i in range(num_epochs):
