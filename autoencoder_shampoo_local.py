@@ -2921,6 +2921,13 @@ if mode==1:
   FLAGS.lr = 3.70288e-3
   FLAGS.eps = 9.66177e-9
   FLAGS.t = 20
+if model==2:
+  FLAGS.beta1 = 9.0e-1
+  FLAGS.beta2 = 9.4925e-1
+  FLAGS.lr = 3.5338e-3
+  FLAGS.eps = 1e-6
+  FLAGS.t = 1
+
 
 
 
