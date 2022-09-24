@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp                # JAX NumPy
 from jax import nn as jnn              # JAX nn
+import argparse
 
 from flax import linen as nn           # The Linen API
 from flax.training import train_state  # Useful dataclass to keep train state
@@ -2959,7 +2960,7 @@ class Autoencoder(nn.Module):
 def get_optimizer(opt, learning_rate):
   print("using optimizer:", opt)
   if opt=="shampoo":
-    return shampoo_optax.distributed_shampoo(
+    return distributed_shampoo(
       learning_rate=learning_rate,
       block_size=2048,
       beta1=FLAGS.beta1,

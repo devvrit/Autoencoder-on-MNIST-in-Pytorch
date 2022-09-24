@@ -1,9 +1,10 @@
 import jax
 import jax.numpy as jnp                # JAX NumPy
 from jax import nn as jnn              # JAX nn
-
+from flax import jax_utils
 from flax import linen as nn           # The Linen API
 from flax.training import train_state  # Useful dataclass to keep train state
+import functools
 import time
 from absl import app
 from functools import partial
@@ -32,7 +33,7 @@ flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
 flags.DEFINE_integer('epochs', 100, help='#Epochs')
 flags.DEFINE_integer('t', 20, help='preconditioner computation frequency')
 flags.DEFINE_enum('dtype', 'float32', ['float32', 'bfloat16'], help='dtype')
-flags.DEFINE_enum('optimizer', 'tds', ['sgd', 'momentum', 'nesterov', 'adagrad',
+flags.DEFINE_enum('optimizer', 'shampoo', ['sgd', 'momentum', 'nesterov', 'adagrad',
   'rmsprop', 'tds', 'shampoo', 'diag_sonew'], help='optimizer')
 FLAGS = flags.FLAGS
 
@@ -84,6 +85,8 @@ def get_optimizer(opt, learning_rate):
   elif opt=="tds":
     return custom_optimizer.tds(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps, transpose=True, adam_grafting=False)
   elif opt=="shampoo":
+    print("FLAGS.t:", FLAGS.t)
+    print("FLAGS.eps:", FLAGS.eps)
     return shampoo_optax.distributed_shampoo(
       learning_rate=learning_rate,
       block_size=2048,
@@ -98,12 +101,12 @@ def get_optimizer(opt, learning_rate):
       best_effort_shape_interpretation=True,
       graft_type=4,
       nesterov=False,
-      best_effort_memory_usage_reduction=True,
+      best_effort_memory_usage_reduction=False,
       inverse_failure_threshold=0.1,
       moving_average_for_momentum=True,
       skip_preconditioning_dim_size_gt=4096,
       clip_by_scaled_gradient_norm=None,
-      batch_axis_name=None)
+      batch_axis_name='batch')
   else:
       raise NotImplementedError
 
@@ -145,7 +148,7 @@ def train(state, model, train_inputs, rng, lrVec):
   state = jax_utils.replicate(state)
 
   #pmap train, eval, and update_lr functions
-  p_update_lr = jax.pmap(update_lr, in_axes=(0,None))
+  #p_update_lr = jax.pmap(update_lr, in_axes=(0,None))
   p_train_step = jax.pmap(functools.partial(train_step, model=model), axis_name='batch')
   p_eval_step = jax.pmap(functools.partial(eval_step, model=model))
 
@@ -168,7 +171,7 @@ def train(state, model, train_inputs, rng, lrVec):
   return state, time_array
 
 
-def main(): 
+def main(argv):
   #Get random keys
   rng = jax.random.PRNGKey(0)
   rng, key1 = jax.random.split(rng)
@@ -235,11 +238,13 @@ def main():
   state, time_array = train(state=state, model=model, train_inputs=train_inputs, rng=rng, lrVec=lrVec)
   return time_array
 
-start = time.time()
-time_array = main()
-print("TOTAL TIME TAKEN:", time.time()-start)
-print("TIME ARRAY:", time_array)
+#start = time.time()
+#time_array = main()
+#print("TOTAL TIME TAKEN:", time.time()-start)
+#print("TIME ARRAY:", time_array)
 
 
 if __name__ == '__main__':
+  start = time.time()
   app.run(main)
+  print("TOTAL TIME TAKEN:", time.time()-start)
