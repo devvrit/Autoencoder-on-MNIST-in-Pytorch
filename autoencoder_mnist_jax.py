@@ -15,7 +15,7 @@ from keras.datasets import mnist
 from typing import (Any, List)
 #from custom_optimizer import *
 import custom_optimizer as custom_optimizer
-import shampoo_jax as shampoo_jax
+import shampoo_optax as shampoo_optax
 
 
 flags.DEFINE_float('beta1', 0.9, help='Beta1')
@@ -84,21 +84,26 @@ def get_optimizer(opt, learning_rate):
   elif opt=="tds":
     return custom_optimizer.tds(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps, transpose=True, adam_grafting=False)
   elif opt=="shampoo":
-    return shampoo_jax.Shampoo(learning_rate = learning_rate,
-                       beta1=FLAGS.beta1,
-                       beta2=FLAGS.beta2,
-                       diagonal_epsilon=1e-10,
-                       matrix_epsilon=FLAGS.eps,
-                       weight_decay=0.0,
-                       start_preconditioning_step=25,
-                       preconditioning_compute_steps=FLAGS.t,
-                       statistics_compute_steps=1,
-                       block_size=128,
-                       best_effort_shape_interpretation=True,
-                       no_preconditioning_for_layers_with_dim_gt=8192,
-                       nesterov=False,
-                       exponent_override=0,
-                       batch_axis_name=None)
+    return shampoo_optax.distributed_shampoo(
+      learning_rate=learning_rate,
+      block_size=2048,
+      beta1=FLAGS.beta1,
+      beta2=FLAGS.beta2,
+      diagonal_epsilon=1e-12,
+      matrix_epsilon=FLAGS.eps,
+      weight_decay=0.0,
+      start_preconditioning_step=25,
+      preconditioning_compute_steps=FLAGS.t,
+      statistics_compute_steps=1,
+      best_effort_shape_interpretation=True,
+      graft_type=4,
+      nesterov=False,
+      best_effort_memory_usage_reduction=True,
+      inverse_failure_threshold=0.1,
+      moving_average_for_momentum=True,
+      skip_preconditioning_dim_size_gt=4096,
+      clip_by_scaled_gradient_norm=None,
+      batch_axis_name=None)
   else:
       raise NotImplementedError
 
