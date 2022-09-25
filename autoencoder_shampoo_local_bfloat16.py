@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp                # JAX NumPy
 from jax import nn as jnn              # JAX nn
 import argparse
-
+import time
 from flax import linen as nn           # The Linen API
 from flax.training import train_state  # Useful dataclass to keep train state
 
@@ -2445,7 +2445,7 @@ def distributed_shampoo(
     def _skip(error):
       condition = jnp.logical_or(
           jnp.isnan(error), error >= inverse_failure_threshold)
-      return condition.astype(error.dtype)
+      return condition
 
     def _select_preconditioner(error, new_p, old_p):
       return lax.cond(
@@ -2898,7 +2898,7 @@ def distributed_shampoo(
 #   'rmsprop', 'tds', 'shampoo', 'diag_sonew'], help='optimizer')
 # FLAGS = flags.FLAGS
 
-
+from flax import jax_utils
 #51.24
 parser = argparse.ArgumentParser()
 parser.add_argument('--beta1', type=float, default=8.37282e-1, help='beta1')
@@ -2916,7 +2916,7 @@ parser.add_argument('--dtype', type=str, default="bfloat16", help="float32 or bf
 
 FLAGS = parser.parse_args(args=[])
 
-mode=1
+mode=3
 if mode == 1:
   FLAGS.beta1 = 8.1261e-1
   FLAGS.beta2 = 7.53646e-1
@@ -3038,6 +3038,7 @@ def train(state, model, train_inputs, test_inputs, rng, lrVec):
   p_eval_step = jax.pmap(functools.partial(eval_step, model=model))
 
   for epoch in range(FLAGS.epochs):
+    start_epoch = time.time()
     print("epoch:", epoch,"and lr going to be used:", lrVec[epoch])
     rng, key = jax.random.split(rng)
     perms = jax.random.permutation(key, train_ds_size)
@@ -3056,11 +3057,13 @@ def train(state, model, train_inputs, test_inputs, rng, lrVec):
                                     (jax.device_count(), -1, 784))).mean()
     print('train_loss_val:', train_loss_val, train_loss_val.dtype)
     print('test_loss_val:', test_loss_val, test_loss_val.dtype)
+    print('time taken for this epoch:', time.time()-start_epoch)
   state = jax_utils.unreplicate(state)
   return state
 
 
 def main(argv):
+  start=time.time()
   #Get random keys
   rng = jax.random.PRNGKey(0)
   rng, key1 = jax.random.split(rng)
@@ -3125,6 +3128,7 @@ def main(argv):
 
   state = train(state=state, model=model, train_inputs=train_inputs,
                 test_inputs=test_inputs, rng=rng, lrVec=lrVec)
+  print("total time taken is:", time.time()-start)
 
 if __name__ == '__main__':
   print("FLAGS:", FLAGS)

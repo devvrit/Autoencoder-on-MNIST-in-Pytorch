@@ -2897,7 +2897,7 @@ def distributed_shampoo(
 #   'rmsprop', 'tds', 'shampoo', 'diag_sonew'], help='optimizer')
 # FLAGS = flags.FLAGS
 
-
+#51.1
 parser = argparse.ArgumentParser()
 parser.add_argument('--beta1', type=float, default=0.8126116224612959, help='beta1')
 parser.add_argument('--beta2', type=float, default=0.753645569541739, help='beta2')
@@ -2914,14 +2914,16 @@ parser.add_argument('--dtype', type=str, default="float32", help="float32 or bfl
 
 FLAGS = parser.parse_args(args=[])
 
-mode=0
+mode=2
 if mode==1:
+  #50.9
   FLAGS.beta1 = 9.00055e-1
   FLAGS.beta2 = 9.50822e-1
   FLAGS.lr = 3.70288e-3
   FLAGS.eps = 9.66177e-9
   FLAGS.t = 20
-if model==2:
+if mode==2:
+  #50.59
   FLAGS.beta1 = 9.0e-1
   FLAGS.beta2 = 9.4925e-1
   FLAGS.lr = 3.5338e-3
