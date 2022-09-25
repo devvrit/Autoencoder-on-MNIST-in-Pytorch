@@ -5,7 +5,7 @@ import argparse
 
 from flax import linen as nn           # The Linen API
 from flax.training import train_state  # Useful dataclass to keep train state
-
+import time
 from absl import app
 from functools import partial
 from absl import flags
@@ -135,10 +135,10 @@ class QuantizedValue:
       return self.quantized
 
     if self.quantized_dtype == jnp.float32:
-      return self.quantized
+      return self.quantized.astype(jnp.bfloat16)
 
     if self.quantized_dtype == jnp.bfloat16:
-      return self.quantized.astype(jnp.float32)
+      return self.quantized.astype(jnp.bfloat16)
 
     float_dtype = self.bucket_size.dtype
     bucket_size = self.bucket_size[jnp.newaxis, Ellipsis]
@@ -535,12 +535,12 @@ def times_vector(mat, vec):
 # Dtype for inverse-pth root routine
 # Switch to f64 if you have hardware that supports it. Enable the jax flag
 # jax_enable_x64 for this to work, otherwise it will default to float32.
-_MAT_INV_PTH_ROOT_DTYPE = jnp.float64
+_MAT_INV_PTH_ROOT_DTYPE = jnp.bfloat16
 
 
 def _default_zero_field():
   return struct.field(
-      default_factory=functools.partial(jnp.array, 0, jnp.float32))
+      default_factory=functools.partial(jnp.array, 0, jnp.bfloat16))
 
 
 InversePthRootDiagnosticsSubtype = TypeVar(
@@ -568,18 +568,18 @@ class InversePthRootDiagnostics:
     mat_m = jnp.matmul(
         mat_power(pth_inverse_root, p),
         matrix,
-        precision=jax.lax.Precision.HIGHEST)
+        precision=jax.lax.Precision.DEFAULT)
     num_off_diag_entries = mat_m.size - jnp.diag(mat_m).size
-    diag_error = jnp.abs(jnp.diag(mat_m) - 1).astype(jnp.float32)
+    diag_error = jnp.abs(jnp.diag(mat_m) - 1).astype(jnp.bfloat16)
     off_diag_error = jnp.abs(mat_m - jnp.diag(jnp.diag(mat_m))).astype(
-        jnp.float32)
+        jnp.bfloat16)
     return cls(
-        max_diag_error=jnp.max(diag_error).astype(jnp.float32),
-        avg_diag_error=jnp.mean(diag_error).astype(jnp.float32),
-        max_off_diag_error=jnp.max(off_diag_error).astype(jnp.float32),
+        max_diag_error=jnp.max(diag_error).astype(jnp.bfloat16),
+        avg_diag_error=jnp.mean(diag_error).astype(jnp.bfloat16),
+        max_off_diag_error=jnp.max(off_diag_error).astype(jnp.bfloat16),
         avg_off_diag_error=(jnp.sum(off_diag_error) /
-                            num_off_diag_entries).astype(jnp.float32),
-        p=jnp.array(p, jnp.float32))
+                            num_off_diag_entries).astype(jnp.bfloat16),
+        p=jnp.array(p, jnp.bfloat16))
 
 
 LOBPCGDiagnosticsSubtype = TypeVar(
@@ -610,7 +610,7 @@ class LOBPCGDiagnostics:
     """Generates LOBPCG diagnostics from the result of the routine."""
     num_topk = len(eigvals)
     num_off_diag = num_topk * (num_topk - 1)
-    precision = jax.lax.Precision.HIGHEST
+    precision = jax.lax.Precision.DEFAULT
 
     mat_eigvecs = matrix.dot(eigvecs, precision=precision)
     consistency_error_unnormalized = jnp.linalg.norm(
@@ -622,14 +622,14 @@ class LOBPCGDiagnostics:
     orthogonality_error -= jnp.diag(jnp.diag(orthogonality_error))
 
     return cls(
-        lobpcg_iters=jnp.array(lobpcg_iters, jnp.float32),
-        max_consistency_error=jnp.max(consistency_error).astype(jnp.float32),
-        avg_consistency_error=jnp.mean(consistency_error).astype(jnp.float32),
+        lobpcg_iters=jnp.array(lobpcg_iters, jnp.bfloat16),
+        max_consistency_error=jnp.max(consistency_error).astype(jnp.bfloat16),
+        avg_consistency_error=jnp.mean(consistency_error).astype(jnp.bfloat16),
         avg_orthogonality_error=(jnp.sum(orthogonality_error) /
-                                 num_off_diag).astype(jnp.float32),
-        max_eigenvalue=jnp.max(eigvals).astype(jnp.float32),
-        min_eigenvalue=jnp.min(eigvals).astype(jnp.float32),
-        num_topk_eigenvectors=jnp.array(num_topk, jnp.float32),
+                                 num_off_diag).astype(jnp.bfloat16),
+        max_eigenvalue=jnp.max(eigvals).astype(jnp.bfloat16),
+        min_eigenvalue=jnp.min(eigvals).astype(jnp.bfloat16),
+        num_topk_eigenvectors=jnp.array(num_topk, jnp.bfloat16),
     )
 
 
@@ -753,7 +753,7 @@ def power_iteration(
     matrix,
     num_iters = 100,
     error_tolerance = 1e-6,
-    precision = lax.Precision.HIGHEST,
+    precision = lax.Precision.DEFAULT,
     padding_start = None,
 ):
   r"""Power iteration algorithm.
@@ -808,7 +808,7 @@ def power_iteration(
 def mat_power(
     mat_m,
     p,
-    precision = lax.Precision.HIGHEST,
+    precision = lax.Precision.DEFAULT,
 ):
   """A simple matrix power method. M^p where p can be TracedValue."""
   power = jnp.eye(mat_m.shape[0], dtype=_MAT_INV_PTH_ROOT_DTYPE)
@@ -858,7 +858,7 @@ def matrix_inverse_pth_root(
     num_iters = 100,
     ridge_epsilon = 1e-6,
     error_tolerance = 1e-6,
-    precision = lax.Precision.HIGHEST,
+    precision = lax.Precision.DEFAULT,
     relative_matrix_epsilon = True,
     lobpcg_topk_precondition = 0,
     lobpcg_max_iter = 0,
@@ -949,7 +949,7 @@ def matrix_inverse_pth_root(
 
     # Deflate out top eigenvectors to reduce matrix condition number.
     matrix -= scaled_vecs.dot(
-        scaled_vecs.T, precision=jax.lax.Precision.HIGHEST)
+        scaled_vecs.T, precision=jax.lax.Precision.DEFAULT)
 
   if relative_matrix_epsilon:
     if eigvals is not None:
@@ -989,7 +989,7 @@ def matrix_inverse_pth_root(
   if matrix_size == 1:
     damped_matrix = matrix + ridge_epsilon
     resultant_mat_h = damped_matrix**alpha
-    error = jnp.array(0, jnp.float32)
+    error = jnp.array(0, jnp.bfloat16)
     iters = 0
     error_ratio = 0.0
   else:
@@ -1003,7 +1003,7 @@ def matrix_inverse_pth_root(
         [0, new_mat_m_0, new_mat_h_0, new_mat_h_0, new_error, True])
     iters, mat_m, mat_h, old_mat_h, error, error_ratio = lax.while_loop(
         _iter_condition, _iter_body, init_state)
-    error = jnp.max(jnp.abs(mat_m - identity)).astype(jnp.float32)
+    error = jnp.max(jnp.abs(mat_m - identity)).astype(jnp.bfloat16)
     is_converged = jnp.asarray(error_ratio < max_error_ratio, old_mat_h.dtype)
     resultant_mat_h = is_converged * mat_h + (1 - is_converged) * old_mat_h
 
@@ -1020,12 +1020,12 @@ def matrix_inverse_pth_root(
     pth_diff = _pth_root_difference(ridge_epsilon, jnp.min(eigvals), eigvals, p)
     scaled_vecs = eigvecs * jnp.sqrt(pth_diff)
     resultant_mat_h = conditioned_resultant_mat - scaled_vecs.dot(
-        scaled_vecs.T, precision=jax.lax.Precision.HIGHEST)
+        scaled_vecs.T, precision=jax.lax.Precision.DEFAULT)
 
   error_metrics = TrainingMetrics(
-      inverse_pth_root_errors=jnp.array(error, jnp.float32),
-      inverse_pth_root_iters=jnp.array(iters, jnp.float32),
-      final_error_ratio=jnp.array(error_ratio, jnp.float32))
+      inverse_pth_root_errors=jnp.array(error, jnp.bfloat16),
+      inverse_pth_root_iters=jnp.array(iters, jnp.bfloat16),
+      final_error_ratio=jnp.array(error_ratio, jnp.bfloat16))
 
   if lobpcg_topk_precondition > 0:
     conditioned_diagnostics = InversePthRootDiagnostics.create(
@@ -1555,7 +1555,7 @@ def distributed_shampoo(
     moving_average_for_momentum=False,
     skip_preconditioning_dim_size_gt=4096,
     clip_by_scaled_gradient_norm=None,
-    precision=lax.Precision.HIGHEST,
+    precision=lax.Precision.DEFAULT,
     tensordot_precision = None,
     relative_matrix_epsilon=True,
     merge_small_dims_block_size=4096,
@@ -1660,17 +1660,17 @@ def distributed_shampoo(
 
   def quantized_dtype_for_momentum_buffers(var):
     return jnp.int8 if best_effort_memory_usage_reduction and len(
-        var.shape) > 1 else jnp.float32
+        var.shape) > 1 else jnp.bfloat16
 
   # Preconditioner and statistics are both stores as int16 in this mode.
   # We take out the diagonal to make quantization easier.
   def quantized_dtype_for_second_moment_statistics_buffers():
-    return jnp.int16 if best_effort_memory_usage_reduction and batch_axis_name else jnp.float32
+    return jnp.int16 if best_effort_memory_usage_reduction and batch_axis_name else jnp.bfloat16
 
   # Preconditioner and statistics are both stores as int16 in this mode.
   # We take out the diagonal to make quantization easier.
   def quantized_dtype_for_second_moment_preconditioner_buffers():
-    return jnp.int16 if best_effort_memory_usage_reduction and batch_axis_name else jnp.float32
+    return jnp.int16 if best_effort_memory_usage_reduction and batch_axis_name else jnp.bfloat16
 
   def _to_float(maybe_quantized):
     if isinstance(maybe_quantized, QuantizedValue):
@@ -1688,7 +1688,7 @@ def distributed_shampoo(
         quantized_dtype_for_second_moment_preconditioner_buffers())
 
   def _maybe_quantize_matrices_with_dtype(statistics_list, quantized_dtype):
-    if quantized_dtype != jnp.float32:
+    if quantized_dtype != jnp.bfloat16:
       return ([
           QuantizedValue.from_float_value(
               s, quantized_dtype, extract_diagonal=True)
@@ -1703,13 +1703,13 @@ def distributed_shampoo(
         quantized_dtype_for_second_moment_preconditioner_buffers())
 
   def _maybe_dequantize_matrices_with_dtype(statistics_list, quantized_dtype):
-    if quantized_dtype != jnp.float32:
+    if quantized_dtype != jnp.bfloat16:
       return [s.to_float() for s in statistics_list]
     else:
       return statistics_list
 
   def _quantize_diagonal_statistics(diagonal_statistics):
-    return QuantizedValue.from_float_value(diagonal_statistics, jnp.float32)
+    return QuantizedValue.from_float_value(diagonal_statistics, jnp.bfloat16)
 
   def _quantize_momentum(momentum_statistics):
     return QuantizedValue.from_float_value(
@@ -1752,10 +1752,10 @@ def distributed_shampoo(
         sizes = [s[0] for s in shapes]
         shapes = preconditioner.shapes_for_preconditioners()
         statistics = [
-            matrix_epsilon * jnp.eye(max_size, dtype=jnp.float32)
+            matrix_epsilon * jnp.eye(max_size, dtype=jnp.bfloat16)
             for s in shapes
         ]
-        preconditioners = [jnp.eye(max_size, dtype=jnp.float32) for s in shapes]
+        preconditioners = [jnp.eye(max_size, dtype=jnp.bfloat16) for s in shapes]
         padded_statistics.extend(statistics)
         padded_preconditioners.extend(preconditioners)
         exponent = (
@@ -1779,7 +1779,7 @@ def distributed_shampoo(
     if max_size == 0:
       to_pad = num_devices_for_pjit
       max_size = block_size
-      stat_dtype = jnp.float32
+      stat_dtype = jnp.bfloat16
     else:
       stat_dtype = padded_statistics[0].dtype
     # Pad the statistics and preconditioner matrices to be a multiple of
@@ -1853,13 +1853,13 @@ def distributed_shampoo(
       m2_pspec = param_pspec
       m1_scale_pspec = []
       m2_scale_pspec = []
-      if qdtype != jnp.float32:
+      if qdtype != jnp.bfloat16:
         m1_scale_pspec = _remove_leading_sharding_annotation(m1_pspec)
         m2_scale_pspec = _remove_leading_sharding_annotation(m2_pspec)
 
       local_stats_flat.append(
           LocalShardedParameterStats(
-              QuantizedValue(param_pspec, [], [], jnp.float32, False,
+              QuantizedValue(param_pspec, [], [], jnp.bfloat16, False,
                              list(param.shape)),
               QuantizedValue(m1_pspec, [], m1_scale_pspec, qdtype, False,
                              list(param.shape)),
@@ -1905,7 +1905,7 @@ def distributed_shampoo(
       m2_shape_and_dtype = [list(param.shape), param.dtype]
       m1_scale_shape_and_dtype = []
       m2_scale_shape_and_dtype = []
-      if qdtype != jnp.float32:
+      if qdtype != jnp.bfloat16:
         m1_scale_shape_and_dtype = [list(param.shape)[1:], qdtype]
         m2_scale_shape_and_dtype = [list(param.shape)[1:], qdtype]
 
@@ -1913,7 +1913,7 @@ def distributed_shampoo(
       local_stats_flat.append(
           LocalShardedParameterStats(
               QuantizedValue(diagonal_statistics_shape_and_dtype, [], [],
-                             jnp.float32, False, list(param.shape)),
+                             jnp.bfloat16, False, list(param.shape)),
               QuantizedValue(m1_shape_and_dtype, [], m1_scale_shape_and_dtype,
                              qdtype, False, list(param.shape)),
               QuantizedValue(m2_shape_and_dtype, [], m2_scale_shape_and_dtype,
@@ -1934,11 +1934,11 @@ def distributed_shampoo(
     statistics_shape = [
         num_statistics, max_statistics_size, max_statistics_size
     ]
-    global_stats = GlobalShardedParameterStats([statistics_shape, jnp.float32],
-                                               [statistics_shape, jnp.float32],
+    global_stats = GlobalShardedParameterStats([statistics_shape, jnp.bfloat16],
+                                               [statistics_shape, jnp.bfloat16],
                                                [[num_statistics], jnp.int32])
     return ShampooState(
-        count=[[], jnp.float32],
+        count=[[], jnp.bfloat16],
         stats=ShardedShampooStats(global_stats, local_stats))
 
 
@@ -1995,7 +1995,7 @@ def distributed_shampoo(
     to_pad = -len(new_padded_statistics) % num_devices_for_pjit
     if not new_padded_statistics:
       to_pad = num_devices_for_pjit
-      stat_dtype = jnp.float32
+      stat_dtype = jnp.bfloat16
     else:
       stat_dtype = new_padded_statistics[0].dtype
 
@@ -2066,9 +2066,9 @@ def distributed_shampoo(
       if not _skip_preconditioning(param):
         shapes = preconditioner.shapes_for_preconditioners()
         statistics = [
-            matrix_epsilon * jnp.eye(s[0], dtype=jnp.float32) for s in shapes
+            matrix_epsilon * jnp.eye(s[0], dtype=jnp.bfloat16) for s in shapes
         ]
-        preconditioners = [jnp.eye(s[0], dtype=jnp.float32) for s in shapes]
+        preconditioners = [jnp.eye(s[0], dtype=jnp.bfloat16) for s in shapes]
 
       diagonal_statistics = []
       if _graft_type_has_diagonal_statistics():
@@ -2261,7 +2261,8 @@ def distributed_shampoo(
     def _skip(error):
       condition = jnp.logical_or(
           jnp.isnan(error), error >= inverse_failure_threshold)
-      return condition.astype(error.dtype)
+      return condition
+      # return condition.astype(error.dtype)
 
     def _select_preconditioner(error, new_p, old_p):
       return lax.cond(
@@ -2371,7 +2372,7 @@ def distributed_shampoo(
     ]
 
     to_pad = -num_statistics % num_devices
-    padded_eye = jnp.eye(max_size, dtype=jnp.float32)
+    padded_eye = jnp.eye(max_size, dtype=jnp.bfloat16)
     quantized_eye = QuantizedValue.from_float_value(padded_eye, quantized_dtype,
                                                     True)
     packed_quantized_statistics.extend(
@@ -2693,7 +2694,7 @@ def distributed_shampoo(
       # Quantization is only enabled if batch_axis_name is not set.
       quantized_dtype = quantized_dtype_for_second_moment_statistics_buffers()
 
-      if quantized_dtype == jnp.float32:
+      if quantized_dtype == jnp.bfloat16:
         return _pmap_compute_preconditioners(states, step, statistics,
                                              num_statistics_per_state,
                                              original_shapes, exponents,
@@ -2897,44 +2898,44 @@ def distributed_shampoo(
 #   'rmsprop', 'tds', 'shampoo', 'diag_sonew'], help='optimizer')
 # FLAGS = flags.FLAGS
 
-#51.1
+
+#51.24
 parser = argparse.ArgumentParser()
-parser.add_argument('--beta1', type=float, default=0.8126116224612959, help='beta1')
-parser.add_argument('--beta2', type=float, default=0.753645569541739, help='beta2')
-parser.add_argument('--lr', type=float, default=0.004601239547952695, help='learning_rate')
+parser.add_argument('--beta1', type=float, default=8.37282e-1, help='beta1')
+parser.add_argument('--beta2', type=float, default=8.30400e-1, help='beta2')
+parser.add_argument('--lr', type=float, default=5.03785e-3, help='learning_rate')
 parser.add_argument('--batch_size', type=int, default=1000, help='batch_size')
 parser.add_argument('--epochs', type=int, default=100, help='epochs')
-parser.add_argument('--eps', type=float, default=0.00024290302185404512, help='eps')
-parser.add_argument('--t', type=int, default=80, help="preconditioner update frequency")
+parser.add_argument('--eps', type=float, default=3.10165e-4, help='eps')
+parser.add_argument('--t', type=int, default=150, help="preconditioner update frequency")
 parser.add_argument('--warmup_epochs', type=int, default=5, help="warmup epochs")
 parser.add_argument('--model_depth_multiplier', type=int, default=1, help="model_depth_multiplier")
 parser.add_argument('--model_size_multiplier', type=int, default=1, help="model_size_multiplier")
 parser.add_argument('--optimizer', type=str, default="shampoo", help="optimizer")
-parser.add_argument('--dtype', type=str, default="float32", help="float32 or bfloat16")
+parser.add_argument('--dtype', type=str, default="bfloat16", help="float32 or bfloat16")
 
 FLAGS = parser.parse_args(args=[])
 
-mode=1
-if mode==1:
-  #50.9
-  FLAGS.beta1 = 9.00055e-1
-  FLAGS.beta2 = 9.50822e-1
-  FLAGS.lr = 3.70288e-3
-  FLAGS.eps = 9.66177e-9
+mode = 1
+if mode == 1:
+  FLAGS.beta1 = 8.1261e-1
+  FLAGS.beta2 = 7.53646e-1
+  FLAGS.lr = 4.6012e-3
+  FLAGS.eps = 2.4290e-4
+  FLAGS.t = 80
+if mode == 2:
+  FLAGS.beta1 = 9.01865e-1
+  FLAGS.beta2 = 9.19932e-1
+  FLAGS.lr = 5.1034e-3
+  FLAGS.eps = 2.5968e-4
   FLAGS.t = 20
-if mode==2:
-  #50.59
-  FLAGS.beta1 = 9.0e-1
-  FLAGS.beta2 = 9.4925e-1
-  FLAGS.lr = 3.5338e-3
-  FLAGS.eps = 1e-6
-  FLAGS.t = 1
-if mode==3:
+if mode == 3:
   FLAGS.beta1 = 0.9
-  FLAGS.beta2 = 9.43936e-1
-  FLAGS.lr = 3.51539e-3
-  FLAGS.eps = 1e-6
-  FLAGS.t = 10
+  FLAGS.beta2 = 9.17082e-1
+  FLAGS.lr = 2.29684e-3
+  FLAGS.eps = 9.87363e-4
+  FLAGS.t = 1
+
 
 
 
@@ -3017,6 +3018,7 @@ def eval_step(model, state, x):
   return loss.astype(jnp.float32).mean(0).sum()
 
 def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec):
+  start_epoch = time.time()
   train_ds_size = len(train_ds)
   steps_per_epoch = train_ds_size // batch_size
   print("epoch:", epoch,"and lr going to be used:", lrVec[epoch])
@@ -3033,13 +3035,15 @@ def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec):
 
   batch_metrics_np = jax.device_get(batch_metrics)
   epoch_metrics_np = np.mean(batch_metrics_np)
+  print("this epoch took time:", time.time()-start_epoch)
 
   # print('train epoch: %d, loss: %.4f' % (epoch, epoch_metrics_np))
 
   return state
 
 
-def main():
+def main(argv):
+  start = time.time()
   #Get random keys
   rng = jax.random.PRNGKey(0)
   rng, key1 = jax.random.split(rng)
@@ -3111,8 +3115,10 @@ def main():
     train_loss_val_.append(train_loss_val)
     print("epoch: " + str(i) +", train_loss_val: " + str(train_loss_val))
     print("")
+  print("training total time is:", time.time()-start)
 
 
 if __name__ == '__main__':
-  # app.run(main)
-  main()
+  print("FLAGS:", FLAGS)
+  app.run(main)
+  # main()

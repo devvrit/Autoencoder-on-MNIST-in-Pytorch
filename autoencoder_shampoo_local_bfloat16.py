@@ -135,7 +135,7 @@ class QuantizedValue:
       return self.quantized
 
     if self.quantized_dtype == jnp.float32:
-      return self.quantized.astype(knp.bfloat16)
+      return self.quantized.astype(jnp.bfloat16)
 
     if self.quantized_dtype == jnp.bfloat16:
       return self.quantized.astype(jnp.bfloat16)
