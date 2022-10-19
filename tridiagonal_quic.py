@@ -1,6 +1,8 @@
 import time
 import jax
 import jax.numpy as jnp
+import scipy
+import numpy as np
 # MACHINE_EPS = 0.0078
 
 '''
@@ -355,7 +357,7 @@ def GENP_jax(a, b):
   % input: a is an n x n nonsingular matrix
   %        b is an n x 1 vector
   % return: x is the solution of Ax=b.
-  % post-condition: A and b have been modified. 
+  % post-condition: A and b have been modified.
   """
   n = a.shape[1]
   orig_a = a
@@ -427,8 +429,9 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
   psi = psi.squeeze(-1)
   psiSig21 = jnp.matmul(psi.reshape((n,1,b)), sig21.reshape((n,b,1))).squeeze(-1).squeeze(-1)
   condCov = Sd - psiSig21
-  
+
   ################# Edge Removal Start ################
+  '''
   condCovFail = (condCov<=0.0078*Sd).reshape((-1,1))
   # condCovFail = (condCov<=1e-7*Sd).reshape((-1,1))
   condCovFail = jnp.broadcast_to(condCovFail, (condCovFail.shape[0], b))
@@ -442,6 +445,7 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
   psiSig21 = jnp.matmul(psi.reshape((n, 1, b)), sig21.reshape((n, b, 1)))
   psiSig21 = psiSig21.squeeze(-1).squeeze(-1)
   condCov = Sd - psiSig21
+  '''
   ################## Edge Removal End ###############
   D = 1/(condCov)
   return psi.astype(Sd.dtype), D.astype(Sd.dtype)
