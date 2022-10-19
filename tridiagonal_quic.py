@@ -1,6 +1,7 @@
 import time
 import jax
 import jax.numpy as jnp
+# MACHINE_EPS = 0.0078
 
 '''
 def tridiagGeneral(el,d,eu):
@@ -212,21 +213,20 @@ def tridiagKFAC(Sd,Se, eps):
   # interms of Ldiag(D)L^T decomposition
   # outputs Lsub and D, where Lsub-subdiagonal of L
 
-  # n = Sd.shape[0]
-  Sd = Sd+eps
-  psi = Se/Sd[1:]
-  condCov = jnp.zeros_like(Sd)
-  condCov = condCov.at[:-1].set(Sd[:-1]-Se*(Se/Sd[1:]))
-  condCov = condCov.at[-1].set(Sd[-1])
-  D = 1/(condCov)
-  mask1 = condCov[:-1]<1e-10
-  mask2 = condCov < 1e-10
+  sd = sd+eps
+  psi = se / sd[1:]
+  cond_cov = jnp.zeros_like(sd)
+  cond_cov = cond_cov.at[:-1].set(sd[:-1] - se*(se/sd[1:]))
+  cond_cov = cond_cov.at[-1].set(sd[-1])
+  d = 1 / (cond_cov)
+  mask1 = cond_cov[:-1] <= 1e-7*sd[:-1]
+  mask2 = cond_cov <= 1e-7*sd
   psi = jnp.where(mask1, 0, psi)
-  D = jnp.where(mask2, 1/Sd, D)
-  Lsub = -psi
-  return ldl2tridiag(Lsub,D)
+  d = jnp.where(mask2, 1/sd, d)
+  lsub = -psi
+  return ldl2tridiag(lsub, d)
 
-
+"""
 
 def cg_batch(A_bmm, B, M_bmm=None, X0=None, rtol=1e-3, atol=0., maxiter=None, verbose=False):
   ## replace this with https://gist.github.com/num3ric/1357315
@@ -347,7 +347,54 @@ def cg_batch(A_bmm, B, M_bmm=None, X0=None, rtol=1e-3, atol=0., maxiter=None, ve
     "optimal": optimal
   }
   return X_k, info
+"""
 
+def GENP_jax(a, b):
+  """Gaussian elimination with no pivoting.
+
+  % input: a is an n x n nonsingular matrix
+  %        b is an n x 1 vector
+  % return: x is the solution of Ax=b.
+  % post-condition: A and b have been modified. 
+  """
+  n = a.shape[1]
+  orig_a = a
+  if b.shape[1] != n:
+    raise ValueError("Invalid argument: " +
+                     "incompatible sizes between A & b.", b.shape[-1], n)
+  for pivot_row in range(n-1):
+    for row in range(pivot_row+1, n):
+      den = a[:, pivot_row, pivot_row]
+      # den = jnp.where(den == 0, 1e-7*orig_a[:, pivot_row, pivot_row], den)
+      den = jnp.where(den == 0, 0.0078*orig_a[:, pivot_row, pivot_row], den)
+      a = a.at[:, pivot_row, pivot_row].set(den)
+      multiplier = a[:, row, pivot_row]/den
+      multiplier = multiplier.reshape(-1, 1)
+      a = a.at[:, row, pivot_row:].set(a[:, row, pivot_row:]-
+                                       multiplier*a[:, pivot_row, pivot_row:])
+      b = b.at[:, row].set(b[:, row] - multiplier*b[:, pivot_row])
+  batches = a.shape[0]
+  x = jnp.zeros((batches, n), dtype=a.dtype)
+  k = n-1
+  a = a.at[:, k, k].set(jnp.where(a[:, k, k] == 0, 0.0078*orig_a[:, k, k],
+                                  a[:, k, k]))
+  # a = a.at[:, k, k].set(jnp.where(a[:, k, k] == 0, 1e-7*orig_a[:, k, k],
+  #                                 a[:, k, k]))
+  orig_a = a
+  den = a[:, k, k].reshape(-1, 1)
+  temp = b[:, k] / den
+  temp = temp.reshape(-1)
+  x = x.at[:, k].set(temp)
+  k = k-1
+  while k >= 0:
+    first = a[:, k, k+1:].reshape((batches, 1, -1))
+    second = x[:, k+1:].reshape((batches, -1, 1))
+    second_term = jnp.matmul(first, second)
+    temp = second_term.reshape(-1)
+    den = a[:, k, k].reshape(-1)
+    x = x.at[:, k].set((b[:, k].reshape(-1) - temp.reshape(-1))/den)
+    k = k-1
+  return x.reshape((batches, -1, 1))
 
 
 def bandedInv(Sd,subDiags,ind,eps,innerIters):
@@ -361,7 +408,7 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
 
   bandvecs = jnp.concatenate((Sd.reshape(-1,1), subDiags), axis=1)
   indX,indY = ind
-  epsMat = jnp.zeros((b, b+1))
+  epsMat = jnp.zeros((b, b+1), dtype=Sd.dtype)
   epsMat = epsMat.at[:,0].set(eps)
   bandWindows = jnp.concatenate((bandvecs,epsMat), axis=0)
   sig22 = bandWindows[indX[:,1:,1:],indY[:,1:,1:]]
@@ -375,36 +422,62 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
   def M_bmm(X):
     return jnp.broadcast_to(jnp.expand_dims(1/diagSig22, axis=-1), X.shape)*X
 
-  psi,_ = cg_batch(A_bmm, jnp.expand_dims(sig21, axis=-1), M_bmm,
-                    maxiter=innerIters if innerIters!=-1 else 5*b, verbose=False)
+  psi = GENP_jax(M_bmm(sig22), M_bmm(jnp.expand_dims(sig21, axis=-1)))
+  # psi = GENP_jax(sig22, jnp.expand_dims(sig21, axis=-1))
   psi = psi.squeeze(-1)
   psiSig21 = jnp.matmul(psi.reshape((n,1,b)), sig21.reshape((n,b,1))).squeeze(-1).squeeze(-1)
   condCov = Sd - psiSig21
-  faultyIdces = faultyInit[condCov==0.0]
-  idcesX = jnp.broadcast_to(jnp.expand_dims(faultyIdces, axis=-1), (faultyIdces.shape[0],b+1))
-  idcesY = idcesX-jnp.broadcast_to(jnp.expand_dims(jnp.arange(b+1), axis=0), (idcesX.shape[0],b+1))
-  idcesY = jnp.where(idcesY<0.0, 0, idcesY)
-  mask = maskInit
-  for i in range(b-1,-1,-1):
-    if i==(b-1):
-      mask = mask.at[idcesY, i].set(True)
-    else:
-      mask = mask.at[idcesY[:,:-(b-i-1)], i].set(True)
-  psi = jnp.where(mask, 0, psi)
-  mask = mask.at[:,:].set(False)
-  psiSig21 = jnp.matmul(psi.reshape((n,1,b)), sig21.reshape((n,b,1)))
-  condCov = Sd - psiSig21.squeeze(-1).squeeze(-1)
-  D = 1/(condCov)
-  return psi, D
+  
+  ################# Edge Removal Start ################
+  condCovFail = (condCov<=0.0078*Sd).reshape((-1,1))
+  # condCovFail = (condCov<=1e-7*Sd).reshape((-1,1))
+  condCovFail = jnp.broadcast_to(condCovFail, (condCovFail.shape[0], b))
+  condCovFail = condCovFail.at[:-1,0].set(jnp.logical_or(condCovFail[:-1,0],
+                                                          condCovFail[1:,0]))
+  for i in range(1, b):
+    condCovFail = condCovFail.at[:-(i+1),i].set(
+        jnp.logical_or(condCovFail[:-(i+1), i], condCovFail[1:-(i), i-1]))
 
+  psi = jnp.where(condCovFail, 0.0, psi)
+  psiSig21 = jnp.matmul(psi.reshape((n, 1, b)), sig21.reshape((n, b, 1)))
+  psiSig21 = psiSig21.squeeze(-1).squeeze(-1)
+  condCov = Sd - psiSig21
+  ################## Edge Removal End ###############
+  D = 1/(condCov)
+  return psi.astype(Sd.dtype), D.astype(Sd.dtype)
+
+def bandedMult(psi, D, vecv):
+  normalize = jnp.ones_like(D)
+  b = psi.shape[1]
+  normalize = jnp.sqrt(normalize)
+  update = vecv*normalize
+  for i in range(b):
+    update = update.at[:-i-1].set(update[:-i-1] - vecv[i+1:]*psi[:-i-1, i])
+  update = update*D
+  vecv2 = update
+  for i in range(b):
+    update = update.at[i+1:].set(update[i+1:] - vecv2[:-i-1]*psi[:-i-1, i])
+  update = update*normalize
+  return update
+
+def getl1norm(Sd, Se):
+  bandSize = Se.shape[1]
+  n = Sd.shape[0]
+  temp = Sd
+  for b in range(bandSize):
+    temp = temp.at[:-(b+1)].set(Sd[:-(b+1)] + jnp.abs(Se[:, b][:-(b+1)]))
+    temp = temp.at[(b+1):].set(Sd[(b+1):] + jnp.abs(Se[:, b][:-(b+1)]))
+  return jnp.max(temp)
+
+def bandedUpdates(Sd, subDiags, ind, eps, innerIters, mu):
+  l1norm = getl1norm(Sd, subDiags)
+  psi, D = bandedInv(Sd+(eps*l1norm), subDiags, ind, eps, innerIters)
+  return bandedMult(psi, D, mu)
 
 def createInd(n,b):
   b1 = b+1
   offsetX = jnp.broadcast_to(jnp.expand_dims(jnp.arange(b1), axis=-1), (b1,b1))
-  print(offsetX)
-  print(jnp.transpose(jnp.triu(offsetX,1), (1,0)))
   offsetX = jnp.triu(offsetX)+jnp.transpose(jnp.triu(offsetX,1), (1,0))
-  print(offsetX)
 
   offsetY = jnp.array(scipy.linalg.toeplitz(np.arange(b1)))
 

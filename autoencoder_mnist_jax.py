@@ -4,7 +4,7 @@ from jax import nn as jnn              # JAX nn
 
 from flax import linen as nn           # The Linen API
 from flax.training import train_state  # Useful dataclass to keep train state
-
+import time
 from absl import app
 from functools import partial
 from absl import flags
@@ -22,6 +22,7 @@ flags.DEFINE_float('beta1', 0.9, help='Beta1')
 flags.DEFINE_float('beta2', 0.999, help='Beta2')
 flags.DEFINE_float('lr', 0.0001, help='Learning rate')
 flags.DEFINE_float('eps', 1e-8, help='eps')
+flags.DEFINE_float('graft_eps', 4.31305e-6, help='eps')
 flags.DEFINE_integer('batch_size',
                      1000, help='Batch size.')
 flags.DEFINE_integer('model_size_multiplier',
@@ -30,10 +31,11 @@ flags.DEFINE_integer('model_depth_multiplier',
                      1, help='Multiply model depth by a constant')
 flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
 flags.DEFINE_integer('epochs', 100, help='#Epochs')
+flags.DEFINE_integer('graft_type', 0, help='Graft_type, 1=adam, 2=norm_rmsprop')
 flags.DEFINE_integer('t', 20, help='preconditioner computation frequency')
 flags.DEFINE_enum('dtype', 'float32', ['float32', 'bfloat16'], help='dtype')
-flags.DEFINE_enum('optimizer', 'shampoo', ['sgd', 'momentum', 'nesterov', 'adagrad',
-  'rmsprop', 'tds', 'shampoo', 'diag_sonew'], help='optimizer')
+flags.DEFINE_enum('optimizer', 'bds', ['sgd', 'momentum', 'nesterov', 'adagrad',
+  'rmsprop', 'tds', 'shampoo', 'diag_sonew', 'bds'], help='optimizer')
 FLAGS = flags.FLAGS
 
 
@@ -82,7 +84,11 @@ def get_optimizer(opt, learning_rate):
   elif opt=="diag_sonew":
     return custom_optimizer.diag_sonew(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps, adam_grafting=False)
   elif opt=="tds":
-    return custom_optimizer.tds(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps, transpose=True, adam_grafting=False)
+    return custom_optimizer.tds(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps, transpose=True, graft_type=FLAGS.graft_type,
+      graft_eps=FLAGS.graft_eps, weight_decay=0.0)
+  elif opt=="bds":
+    return custom_optimizer.bds(learning_rate, beta1=FLAGS.beta1, beta2=FLAGS.beta2, eps=FLAGS.eps, graft_eps=FLAGS.graft_eps,
+      weight_decay=0.0, b=FLAGS.b, transpose=True, graft_type=FLAGS.graft_type)
   elif opt=="shampoo":
     return shampoo_optax.distributed_shampoo(
       learning_rate=learning_rate,
@@ -156,6 +162,7 @@ def train_epoch(state, model, train_ds, batch_size, epoch, rng, lrVec):
 
 
 def main(argv):
+  train_start = time.time()
   #Get random keys
   rng = jax.random.PRNGKey(0)
   rng, key1 = jax.random.split(rng)
@@ -223,12 +230,14 @@ def main(argv):
 
   for i in range(num_epochs):
     rng, key = jax.random.split(rng)
+    epoch_start = time.time()
     state = train_epoch(state, model, train_inputs, FLAGS.batch_size, i, key, lrVec)
+    print("total time taken for this epoch:", time.time()-epoch_start)
     train_loss_val = eval_step(model, state, train_inputs)
     train_loss_val_.append(train_loss_val)
     print("epoch: " + str(i) +", train_loss_val: " + str(train_loss_val))
     print("")
-
+  print("total time taken for training:", time.time()-train_start)
 
 if __name__ == '__main__':
   app.run(main)
