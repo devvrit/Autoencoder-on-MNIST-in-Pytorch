@@ -446,6 +446,30 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
   psiSig21 = psiSig21.squeeze(-1).squeeze(-1)
   condCov = Sd - psiSig21
   '''
+  def cond(arguments):
+    condCov, psi, psiSig21 = arguments
+    return jnp.any((condCov <= 0.0078*Sd))
+    # return jnp.any((condCov <= 1e-7*Sd))
+
+  def body(arguments):
+    condCov, psi, psiSig21 = arguments
+    condCovFail = (condCov<=0.0078*Sd).reshape((-1,1))
+    # condCovFail = (condCov<=1e-7*Sd).reshape((-1,1))
+    condCovFail = jnp.broadcast_to(condCovFail, (condCovFail.shape[0], b))
+    condCovFail = condCovFail.at[:-1,0].set(jnp.logical_or(condCovFail[:-1,0],
+                                                           condCovFail[1:,0]))
+    for i in range(1,b):
+      condCovFail = condCovFail.at[:-(i+1),i].set(
+          jnp.logical_or(condCovFail[:-(i+1), i], condCovFail[1:-(i), i-1]))
+
+    psi = jnp.where(condCovFail, 0.0, psi)
+    psiSig21 = jnp.matmul(psi.reshape((n, 1, b)), sig21.reshape((n, b, 1)))
+    psiSig21 = psiSig21.squeeze(-1).squeeze(-1)
+    condCov = Sd - psiSig21
+    return (condCov, psi, psiSig21)
+  ret = (condCov, psi, psiSig21)
+  ret = jax.lax.while_loop(cond, body, ret)
+  condCov, psi, psiSig21 = ret
   ################## Edge Removal End ###############
   D = 1/(condCov)
   return psi.astype(Sd.dtype), D.astype(Sd.dtype)
