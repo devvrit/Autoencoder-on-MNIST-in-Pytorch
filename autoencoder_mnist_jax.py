@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp                # JAX NumPy
 from jax import nn as jnn              # JAX nn
+from jax.config import config
+config.update("jax_debug_nans", True)
 
 from flax import linen as nn           # The Linen API
 from flax.training import train_state  # Useful dataclass to keep train state
@@ -33,7 +35,7 @@ flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
 flags.DEFINE_integer('epochs', 100, help='#Epochs')
 flags.DEFINE_integer('graft_type', 0, help='Graft_type, 1=adam, 2=norm_rmsprop')
 flags.DEFINE_integer('t', 1, help='preconditioner computation frequency')
-flags.DEFINE_integer('b', 1, help='preconditioner computation frequency')
+flags.DEFINE_integer('b', 4, help='preconditioner computation frequency')
 flags.DEFINE_enum('dtype', 'bfloat16', ['float32', 'bfloat16'], help='dtype')
 flags.DEFINE_enum('optimizer', 'bds', ['sgd', 'momentum', 'nesterov', 'adagrad',
   'rmsprop', 'tds', 'shampoo', 'diag_sonew', 'bds'], help='optimizer')
