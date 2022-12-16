@@ -200,156 +200,63 @@ def GradDescent(Sd,Se,T = 10,sigma = 0.1):
   return Xd,Xe
 '''
 
-def ldl2tridiag(Lsub,D):
-  # n = D.shape[0]
-  Xd = jnp.zeros_like(D)
-  Xd = Xd.at[1:].set(D[1:]+Lsub*Lsub*D[:-1])
-  Xd = Xd.at[0].set(D[0])
-  Xe = Lsub*D[:-1]
-  return Xd,Xe
+def getl1norm_tds(sd, se):
+  """Get l1norm of tridiagonal matrix given diagonal and off-diag statistics."""
+  temp = sd
+  temp = temp.at[:-1].set(sd[:-1] + jnp.abs(se))
+  temp = temp.at[1:].set(sd[1:] + jnp.abs(se))
+  return jnp.max(temp)
 
-# @jax.jit
-def tridiagKFAC(Sd,Se, eps):
-  # given diagonal-Sd and subdiagonal-Se
-  # find the inverse of pd completion of this tridiagonal matrix
-  # interms of Ldiag(D)L^T decomposition
-  # outputs Lsub and D, where Lsub-subdiagonal of L
 
-  sd = sd+eps
+def ldl2tridiag(lsub, d):
+  """Use L and D to compute tridiag=LDL^T.
+
+  Args:
+   lsub: L is bidiagonal, where diag(L)=1. So providing subdiagonal of L.
+   d: inverse conditional covariance. Used as "D" in LDL^T.
+
+  Returns:
+   xd, xe -- diagonal and subdiagonal preconditioner.
+  """
+  xd = jnp.zeros_like(d)
+  xd = xd.at[1:].set(d[1:] + lsub * lsub * d[:-1])
+  xd = xd.at[0].set(d[0])
+  xe = lsub * d[:-1]
+  return xd, xe
+
+
+
+def tridiag_kfac(sd, se, eps, min_eps=1e-16):
+  """Tridiagonal approximation.
+
+  Given diagonal (sd) and subdiagonal(se), find the inverse
+  of PD completion of this tridiag matrix using LDL^T
+  Ref: https://arxiv.org/pdf/1503.05671.pdf, Sec 4.3.
+
+  Args:
+   sd: Diagonal statistics
+   se: Subdiagonal statistcs
+   eps: eps added to the diagonal statistic
+   min_eps: minimum eps to be added to the diag statistics
+
+  Returns:
+   xd, xe -- diagonal and subdiagonal preconditioner
+  """
+  l1norm = getl1norm_tds(sd, se)
+  sd = sd + jnp.maximum(eps * l1norm, min_eps)
   psi = se / sd[1:]
   cond_cov = jnp.zeros_like(sd)
   cond_cov = cond_cov.at[:-1].set(sd[:-1] - se*(se/sd[1:]))
   cond_cov = cond_cov.at[-1].set(sd[-1])
-  d = 1 / (cond_cov)
-  mask1 = cond_cov[:-1] <= 1e-7*sd[:-1]
-  mask2 = cond_cov <= 1e-7*sd
+  d = 1 / cond_cov
+  mask1 = cond_cov[:-1] <= 0.0
+  mask2 = cond_cov <= 0.0
   psi = jnp.where(mask1, 0, psi)
-  d = jnp.where(mask2, 1/sd, d)
+  d = jnp.where(mask2, 1 / sd, d)
   lsub = -psi
   return ldl2tridiag(lsub, d)
 
-"""
 
-def cg_batch(A_bmm, B, M_bmm=None, X0=None, rtol=1e-3, atol=0., maxiter=None, verbose=False):
-  ## replace this with https://gist.github.com/num3ric/1357315
-  '''Solves a batch of PD matrix linear systems using the preconditioned
-  CG algorithm.
-  This function solves a batch of matrix linear systems of the form
-      A_i X_i = B_i,  i=1,...,K,
-  where A_i is a n x n positive definite matrix and B_i is a n x m matrix,
-  and X_i is the n x m matrix representing the solution for the ith system.
-  Args:
-    A_bmm: A callable that performs a batch matrix multiply of A
-    and a K x n x m matrix.
-    B: A K x n x m matrix representing the right hand sides.
-    M_bmm: (optional) A callable that performs a batch matrix multiply
-    of the preconditioning matrices M
-    and a K x n x m matrix. (default=identity matrix)
-    X0: (optional) Initial guess for X, defaults to M_bmm(B). (default=None)
-    rtol: (optional) Relative tolerance for norm of residual. (default=1e-3)
-    atol: (optional) Absolute tolerance for norm of residual. (default=0)
-    maxiter: (optional) Maximum number of iterations to perform. (default=5*n)
-    verbose: (optional) Whether or not to print status messages. (default=False)
-  '''
-
-  K, n, m = B.shape
-
-  if M_bmm is None:
-    M_bmm = lambda x: x
-  if X0 is None:
-    X0 = M_bmm(B)
-  if maxiter is None:
-    maxiter = 5 * n
-
-  assert B.shape == (K, n, m)
-  assert X0.shape == (K, n, m)
-  assert rtol > 0 or atol > 0
-  assert isinstance(maxiter, int)
-
-  X_k = X0
-  R_k = B - A_bmm(X_k)
-  Z_k = M_bmm(R_k)
-
-  # P_k = torch.zeros_like(Z_k)
-  P_k = jnp.zeros_like(Z_k)
-
-  P_k1 = P_k
-  R_k1 = R_k
-  R_k2 = R_k
-  X_k1 = X0
-  Z_k1 = Z_k
-  Z_k2 = Z_k
-
-  B_norm = jnp.linalg.norm(B, axis=1)
-  stopping_matrix = jnp.maximum(rtol*B_norm, atol*jnp.ones_like(B_norm))
-
-  for k in range(1, maxiter + 1):
-    Z_k = M_bmm(R_k)
-    if k == 1:
-      P_k = Z_k
-      R_k1 = R_k
-      X_k1 = X_k
-      Z_k1 = Z_k
-    else:
-      R_k2 = R_k1
-      Z_k2 = Z_k1
-      P_k1 = P_k
-      R_k1 = R_k
-      Z_k1 = Z_k
-      X_k1 = X_k
-      denominator = jnp.sum(R_k2 * Z_k2, axis=1)
-      denominator = jnp.where(denominator==0, 1e-8, denominator)
-      # denominator = denominator.at[denominator==0].set(1e-8)
-      beta = jnp.sum(R_k1 * Z_k1, axis=1) / denominator
-      P_k = Z_k1 + jnp.expand_dims(beta, axis=1) * P_k1
-    AP_k = A_bmm(P_k)
-    denominator = jnp.sum(P_k * AP_k, axis=1)
-    denominator = jnp.where(denominator==0, 1e-8, denominator)
-    # denominator = denominator.at[denominator==0].set(1e-8)
-    alpha = jnp.sum(R_k1 * Z_k1, axis=1) / denominator
-    X_k = X_k1 + jnp.expand_dims(alpha, axis=1) * P_k
-    R_k = R_k1 - jnp.expand_dims(alpha, axis=1) * AP_k
-
-  if verbose:
-      print("%03s | %010s %06s" % ("it", "dist", "it/s"))
-
-  optimal = False
-  start = time.perf_counter()
-  for k in range(1, maxiter + 1):
-    start_iter = time.perf_counter()
-    Z_k = M_bmm(R_k)
-
-    if k == 1:
-      P_k = Z_k
-      R_k1 = R_k
-      X_k1 = X_k
-      Z_k1 = Z_k
-    else:
-      R_k2 = R_k1
-      Z_k2 = Z_k1
-      P_k1 = P_k
-      R_k1 = R_k
-      Z_k1 = Z_k
-      X_k1 = X_k
-      denominator = (R_k2 * Z_k2).sum(1)
-      denominator = jnp.where(denominator==0, 1e-8, denominator)
-      beta = (R_k1 * Z_k1).sum(1) / denominator
-      P_k = Z_k1 + jnp.expand_dims(beta, axis=1) * P_k1
-    AP_k = A_bmm(P_k)
-    denominator = (P_k * AP_k).sum(1)
-    denominator = jnp.where(denominator==0, 1e-8, denominator)
-    # denominator = denominator.at[denominator==0].set(1e-8)
-    alpha = (R_k1 * Z_k1).sum(1) / denominator
-    X_k = X_k1 + jnp.expand_dims(alpha, axis=1) * P_k
-    R_k = R_k1 - jnp.expand_dims(alpha, axis=1) * AP_k
-    end_iter = time.perf_counter()
-
-  info = {
-    "niter": k,
-    "optimal": optimal
-  }
-  return X_k, info
-"""
 
 def GENP_jax(a, b):
   """Gaussian elimination with no pivoting.

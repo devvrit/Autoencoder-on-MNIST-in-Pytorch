@@ -66,102 +66,119 @@ class PreconditionTriDiagonalState(NamedTuple):
   diag: optax.Updates
 
 #Pre conditioning by tri diagonal structure
-def precondition_by_tds(
-    b1: float = 0.999,
-    b2: float = 0.9,
-    eps: float = 1e-8,
-    graft_eps: float = 1e-8,
-    transpose: bool = True,
-    graft_type: int = 0,
-    debias: bool = True) -> optax.GradientTransformation:
-
+def precondition_by_tds(beta1: float = 0.9,
+                        beta2: float = 0.999,
+                        eps: float = 1e-8,
+                        graft_type: int = 0,
+                        graft_eps: float = 1e-8,
+                        transpose: bool = True,
+                        debias: bool = True) -> optax.GradientTransformation:
+  """Preconditioning  by tri-diagonal structure."""
   def init_fn(params):
     diag = None
-    if graft_type == 2:
-      diag = jax.tree_map(lambda g: jnp.zeros(len(g.reshape(-1)),
+    if graft_type == 4:  # Normalized rmsprop grafting
+      diag = jax.tree_map(lambda g: jnp.zeros(len(g.reshape(-1)),  # pylint: disable=g-long-lambda
                                               dtype=g.dtype), params)
     return PreconditionTriDiagonalState(
         count=jnp.zeros([], jnp.int32),
         mu=jax.tree_map(jnp.zeros_like, params),
-        nu_e=jax.tree_map(lambda g: jnp.zeros(len(g.reshape(-1))-1,
+        nu_e=jax.tree_map(lambda g: jnp.zeros(len(g.reshape(-1)) - 1,  # pylint: disable=g-long-lambda
                                               dtype=g.dtype), params),
-        nu_d=jax.tree_map(lambda g: jnp.zeros(len(g.reshape(-1)),
+        nu_d=jax.tree_map(lambda g: jnp.zeros(len(g.reshape(-1)),  # pylint: disable=g-long-lambda
                                               dtype=g.dtype), params),
         diag=diag)
 
-  def update_fn(updates, state, params):
+  def update_fn(updates, state, params=None):
     del params
     diag = state.diag
-    updates_hat = jax.tree_map(lambda g: g.T.reshape(-1)
-                               if transpose else g.reshape(-1), updates)
-    mu = _update_moment(updates, state.mu, b1, 1)
-    nu_e, nu_d = _update_nu(updates_hat, state.nu_e, state.nu_d, b2)
+    updates_hat = jax.tree_map(
+        lambda g: g.T.reshape(-1) if transpose else g.reshape(-1), updates)
+    mu = _update_moment(updates, state.mu, beta1, 1)
+    nu_e, nu_d = _update_nu(updates_hat, state.nu_e, state.nu_d, beta2)
     count = state.count + jnp.array(1, dtype=jnp.int32)
-    mu_hat = mu if not debias else _bias_correction(mu, b1, count)
-    nu_hat_e = nu_e if not debias else _bias_correction(nu_e, b2, count)
-    nu_hat_d = nu_d if not debias else _bias_correction(nu_d, b2, count)
+    mu_hat = _bias_correction(mu, beta1, count) if debias else mu
+    nu_hat_e = _bias_correction(nu_e, beta2, count) if debias else nu_e
+    nu_hat_d = _bias_correction(nu_d, beta2, count) if debias else nu_d
 
-    temp = jax.tree_map(lambda d, e:
-                        tridiagonal.tridiagKFAC(d, e, eps=eps),
+    temp = jax.tree_map(lambda d, e:  # pylint: disable=g-long-lambda
+                        tridiagonal.tridiag_kfac(d, e, eps),
                         nu_hat_d, nu_hat_e)
     pre_d = jax.tree_map(lambda h, g: g[0], nu_hat_d, temp)
     pre_e = jax.tree_map(lambda h, g: g[1], nu_hat_e, temp)
 
-    mu_hat_flat = jax.tree_map(lambda m: m.T.reshape(-1)
-                               if transpose else m.reshape(-1), mu_hat)
+    mu_hat_flat = jax.tree_map(
+        lambda m: m.T.reshape(-1) if transpose else m.reshape(-1), mu_hat)
     # Multiply gradient with diagonal
-    updates = jax.tree_map(lambda m, a: m*a, mu_hat_flat, pre_d)
+    updates = jax.tree_map(lambda m, a: m * a, mu_hat_flat, pre_d)
     # updates[i] = updates[i] + gradient[i-1]*pre_e[i], for i>0
-    updates = jax.tree_map(lambda u, m, a: u.at[1:].set(u[1:]+m[:-1]*a),
-                           updates, mu_hat_flat, pre_e)
+    updates = jax.tree_map(
+        lambda u, m, a: u.at[1:].set(u[1:] + m[:-1] * a), updates, mu_hat_flat,
+        pre_e)
     # updates[i] = updates[i] + gradient[i+1]*pre_e[i], for i<n-1
-    updates = jax.tree_map(lambda u, m, a: u.at[:-1].set(u[:-1]+m[1:]*a),
-                           updates, mu_hat_flat, pre_e)
+    updates = jax.tree_map(
+        lambda u, m, a: u.at[:-1].set(u[:-1] + m[1:] * a), updates, mu_hat_flat,
+        pre_e)
+
+    # Get adam updates for biases
+    adam_updates = jax.tree_map(lambda m, v: m / (jnp.sqrt(v) +  graft_eps),
+                                mu_hat_flat, nu_hat_d)
     if graft_type == 1:
-      adam_updates = jax.tree_map(lambda m, v: m / (jnp.sqrt(v) + graft_eps),
-                                  mu_hat_flat, nu_hat_d)
       updates = jax.tree_map(
           lambda u, au: (jnp.linalg.norm(au) / (jnp.linalg.norm(u)+1e-12)) * u,
           updates, adam_updates)
     elif graft_type == 2:
-      updates_hat = jax.tree_map(lambda g: g/(jnp.linalg.norm(g)+1e-16),
-                                 updates_hat)
-      diag = _update_moment(updates_hat, diag, b2, 2)
-      updates_hat = jax.tree_map(lambda g, d: g/(jnp.sqrt(d)+graft_eps),
-                                 updates_hat, diag)
+      # perform sgd grafting
       updates = jax.tree_map(
           lambda u, au: (jnp.linalg.norm(au) / (jnp.linalg.norm(u)+1e-12)) * u,
           updates, updates_hat)
-    # reshape them to the original param shapes
-    updates = jax.tree_map(lambda mf, m: mf.reshape(m.T.shape).T
-                           if transpose else mf.reshape(m.shape),
-                           updates, mu_hat)
+    elif graft_type == 3:
+      # perform momentum grafting
+      updates = jax.tree_map(
+          lambda u, au: (jnp.linalg.norm(au) / (jnp.linalg.norm(u)+1e-12)) * u,
+          updates, mu_hat_flat)
+    elif graft_type == 4:
+      # perform normalized rmsprop grafting
+      updates_hat = jax.tree_map(lambda g: g/(jnp.linalg.norm(g)+1e-16),
+                                 updates_hat)
+      diag = _update_moment(updates_hat, diag, beta2, 2)
+      updates_hat = jax.tree_map(lambda g, d: g/(jnp.sqrt(d)+graft_eps),
+                                 updates_hat, diag)
+      updates = jax.tree_map(
+          lambda u, au: (jnp.linalg.norm(au) / (jnp.linalg.norm(u)+1e-16)) * u,
+          updates, updates_hat)
 
-    # An alternaative way to multiply with tridiagonal matrix is below
-    '''
-    mu_hat_flat = jax.tree_map(lambda m: jnp.append(jnp.append(0.0, m.reshape(-1)),0.0), mu_hat)
-    pre_e = jax.tree_map(lambda g: jnp.append(jnp.append(0.0, g), 0.0), pre_e)
-    updates = jax.tree_map(lambda mf, m, a, b:
-                                (mf[:-2]*a[:-1] + mf[1:-1]*b + mf[2:]*a[1:]).reshape(m.shape),
-                                mu_hat_flat, mu_hat, pre_e, pre_d)
-    # print(pre_e, pre_d)
-    '''
-    return updates, PreconditionTriDiagonalState(count=count, mu=mu, nu_e=nu_e,
-                                                 nu_d=nu_d, diag=diag)
+    # reshape them to the original param shapes
+    updates = jax.tree_map(
+        lambda mf, m: mf.reshape(m.T.shape).T  # pylint: disable=g-long-lambda
+        if transpose else mf.reshape(m.shape), updates, mu_hat)
+    adam_updates = jax.tree_map(
+        lambda mf, m: mf.reshape(m.T.shape).T  # pylint: disable=g-long-lambda
+        if transpose else mf.reshape(m.shape), adam_updates, mu_hat)
+    updates = jax.tree_map(lambda u, au: au if len(u.shape) <= 1 else u,
+                           updates, adam_updates)
+    return updates, PreconditionTriDiagonalState(
+        count=count, mu=mu, nu_e=nu_e, nu_d=nu_d, diag=diag)
 
   return optax.GradientTransformation(init_fn, update_fn)
 
 
-def tds(learning_rate: ScalarOrSchedule, b1=0.9, b2=0.99, eps=1e-8,
-        weight_decay: float = 0.0, graft_type: int = 0, graft_eps: float = 1e-8,
-        transpose=True):
-  return combine.chain(
-      precondition_by_tds(
-          b1=b1, b2=b2, eps=eps, transpose=transpose, graft_eps=graft_eps,
-          graft_type=graft_type),
+def tds(learning_rate: ScalarOrSchedule,
+        beta1: float = 0.9,
+        beta2: float = 0.99,
+        eps: float = 1e-8,
+        graft_type: int = 0,
+        graft_eps: float = 1e-8,
+        weight_decay: float = 0.0,
+        transpose: bool = True) -> optax.GradientTransformation:
+  return optax.chain(
+      precondition_by_tds(beta1=beta1, beta2=beta2, eps=eps,
+                          graft_type=graft_type,
+                          graft_eps=graft_eps,
+                          transpose=transpose),
       optax.add_decayed_weights(weight_decay),
       scale_by_learning_rate(learning_rate),
   )
+
 
 
 class PreconditionBandedDiagonalState(NamedTuple):

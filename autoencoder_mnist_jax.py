@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp                # JAX NumPy
 from jax import nn as jnn              # JAX nn
 from jax.config import config
-config.update("jax_debug_nans", True)
+# config.update("jax_debug_nans", True)
 
 from flax import linen as nn           # The Linen API
 from flax.training import train_state  # Useful dataclass to keep train state
@@ -87,7 +87,7 @@ def get_optimizer(opt, learning_rate):
   elif opt=="diag_sonew":
     return custom_optimizer.diag_sonew(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps, adam_grafting=False)
   elif opt=="tds":
-    return custom_optimizer.tds(learning_rate, b1=FLAGS.beta1, b2=FLAGS.beta2, eps=FLAGS.eps, transpose=True, graft_type=FLAGS.graft_type,
+    return custom_optimizer.tds(learning_rate, beta1=FLAGS.beta1, beta2=FLAGS.beta2, eps=FLAGS.eps, transpose=True, graft_type=FLAGS.graft_type,
       graft_eps=FLAGS.graft_eps, weight_decay=0.0)
   elif opt=="bds":
     return custom_optimizer.bds(learning_rate, beta1=FLAGS.beta1, beta2=FLAGS.beta2, eps=FLAGS.eps, graft_eps=FLAGS.graft_eps,
