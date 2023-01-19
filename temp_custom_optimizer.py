@@ -1,10 +1,15 @@
 """Sparse preconditioners."""
+import functools
 from typing import NamedTuple, Union
+import tridiagonal_quic as tridiagonal
 
 import chex
 import jax
 import jax.numpy as jnp
 import optax
+
+
+ScalarOrSchedule = Union[float, optax.Schedule]
 
 
 def _update_moment(updates, moments, decay, order):
@@ -96,12 +101,18 @@ def _update_nu(updates, nu_e, nu_d, beta2):
   return nu_e, nu_d
 
 
-def _update_nu_vmap(update, nu_e, nu_d, beta2):
+def update_nu_d(update, nu_d, beta2):
   """Compute the exponential moving average of the tridiagonal structure of the moment."""
   update = update/(jnp.sqrt(jnp.linalg.norm(update))+1e-16)
   nu_d = (1-beta2) * (update**2) + beta2 * nu_d
+  return nu_d
+
+
+def update_nu_e(update, nu_e, beta2):
+  """Compute the exponential moving average of the tridiagonal structure of the moment."""
+  update = update/(jnp.sqrt(jnp.linalg.norm(update))+1e-16)
   nu_e = (1-beta2) * (update[:-1] * update[1:]) + beta2 * nu_e
-  return nu_e, nu_d
+  return nu_e
 
 
 class PreconditionTriDiagonalState(NamedTuple):
@@ -121,27 +132,31 @@ def precondition_by_tds(beta1: float = 0.9,
                         transpose: bool = True,
                         debias: bool = True) -> optax.GradientTransformation:
   """Preconditioning  by tri-diagonal structure."""
-  def diag_init_fn_vmap(param):
+  def diag_init_fn(param):
     return jnp.zeros(len(param.reshape(-1)))
 
-  def subdiag_init_fn_vmap(param):
+  def subdiag_init_fn(param):
     return jnp.zeros(len(param.reshape(-1))-1)
+
+  diag_init_fn_vmap = jax.vmap(diag_init_fn)
+  subdiag_init_fn_vmap = jax.vmap(subdiag_init_fn)
 
   def init_fn(params):
     diag = None
-    params = jax.tree_map(lambda g: g.reshape(-1, 1) if len(g.shape) == 1  # pylint: disable=g-long-lambda
+    params = jax.tree_map(lambda g: g.reshape(-1, 1) if len(g.shape) == 1
                           else g, params)
-    if graft_type == 4 or graft_type == 1:  # Adam/Normalized rmsprop grafting
-      diag = jax.tree_map(lambda g: jax.vmap(diag_init_fn_vmap(g.T)) if  # pylint: disable=g-long-lambda
-                          transpose else jax.vmap(diag_init_fn_vmap(g)), params)
+    if graft_type == 1:  # Adam grafting
+      diag = jax.tree_map(lambda g: diag_init_fn_vmap(g.T) if
+                          transpose else diag_init_fn_vmap(g), params)
+
     return PreconditionTriDiagonalState(
         count=jnp.zeros([], jnp.int32),
         mu=jax.tree_map(jnp.zeros_like, params),
-        nu_e=jax.tree_map(lambda g: jax.vmap(subdiag_init_fn_vmap(g.T)) if  # pylint: disable=g-long-lambda
-                          transpose else jax.vmap(subdiag_init_fn_vmap(g)),
+        nu_e=jax.tree_map(lambda g: subdiag_init_fn_vmap(g.T) if
+                          transpose else subdiag_init_fn_vmap(g),
                           params),
-        nu_d=jax.tree_map(lambda g: jax.vmap(diag_init_fn_vmap(g.T)) if  # pylint: disable=g-long-lambda
-                          transpose else jax.vmap(diag_init_fn_vmap(g)),
+        nu_d=jax.tree_map(lambda g: diag_init_fn_vmap(g.T) if
+                          transpose else diag_init_fn_vmap(g),
                           params),
         diag=diag)
 
@@ -152,69 +167,78 @@ def precondition_by_tds(beta1: float = 0.9,
     return updates
 
   def graft_adam(update, adam_update):
-    update = jnp.linalg.norm(adam_update)/(jnp.sqrt(
-        jnp.linalg.norm(update))+1e-16) * update
+    update = jnp.linalg.norm(adam_update)/(
+        jnp.linalg.norm(update)+1e-16) * update
+    return update
 
-  def update_fn(updates, state, params=None):
+  precondition_grad_vmap = jax.vmap(precondition_grad)
+  graft_adam_vmap = jax.vmap(graft_adam)
+
+  def update_fn(updates, state, params):
     diag = state.diag
-    updates = jax.tree_map(lambda g: g.reshape(-1, 1) if len(g.shape) == 1  # pylint: disable=g-long-lambda
+    updates = jax.tree_map(lambda g: g.reshape(-1, 1) if len(g.shape) == 1
                            else g, updates)
     # updates = jax.tree_map(lambda g: g/(jnp.linalg.norm(g)+1e-16), updates)
-    updates_hat = jax.tree_map(lambda g: jax.vmap(diag_init_fn_vmap(g.T))  # pylint: disable=g-long-lambda
-                               if transpose else jax.vmap(diag_init_fn_vmap(g)),
+    updates_hat = jax.tree_map(lambda g: g.T.reshape((g.T.shape[0], -1))
+                               if transpose else g.reshape((g.shape[0], -1)),
                                updates)
 
     mu = _update_moment(updates, state.mu, beta1, 1)
-    nu_e, nu_d = jax.tree_map(lambda g, u, d: jax.vmap(_update_nu_vmap(g, u, d,  # pylint: disable=g-long-lambda
-                                                                       beta2)),
-                              updates_hat, state.nu_e, state.nu_d, beta2)
+    update_nu_d_vmap = jax.vmap(functools.partial(update_nu_d, beta2=beta2))
+    update_nu_e_vmap = jax.vmap(functools.partial(update_nu_e, beta2=beta2))
+    nu_d = jax.tree_map(lambda g, d: update_nu_d_vmap(g, d), updates_hat,
+                        state.nu_d)
+    nu_e = jax.tree_map(lambda g, e: update_nu_e_vmap(g, e), updates_hat,
+                        state.nu_e)
+
     count = state.count + jnp.array(1, dtype=jnp.int32)
     mu_hat = _bias_correction(mu, beta1, count) if debias else mu
     nu_hat_e = _bias_correction(nu_e, beta2, count) if debias else nu_e
     nu_hat_d = _bias_correction(nu_d, beta2, count) if debias else nu_d
 
-    temp = jax.tree_map(lambda d, e:  # pylint: disable=g-long-lambda
-                        jax.vmap(tridiagonal.tridiag_kfac(d, e, eps)),
-                        nu_hat_d, nu_hat_e)
+    tds_vmap = jax.vmap(functools.partial(tridiagonal.tridiag_kfac, eps=eps))
+    temp = jax.tree_map(lambda d, e:
+                        tds_vmap(d, e), nu_hat_d, nu_hat_e)
     pre_d = jax.tree_map(lambda h, g: g[0], nu_hat_d, temp)
     pre_e = jax.tree_map(lambda h, g: g[1], nu_hat_e, temp)
 
-    mu_hat_flat = jax.tree_map(lambda g: jax.vmap(diag_init_fn_vmap(g.T))  # pylint: disable=g-long-lambda
-                               if transpose else jax.vmap(diag_init_fn_vmap(g)),
+    mu_hat_flat = jax.tree_map(lambda g: g.T.reshape((g.T.shape[0], -1))
+                               if transpose else g.reshape((g.shape[0], -1)),
                                mu_hat)
 
-    updates = jax.tree_map(lambda d, e, g: jax.vmap(precondition_grad(d, e, g)),
+    updates = jax.tree_map(lambda d, e, g: precondition_grad_vmap(d, e, g),
                            pre_d, pre_e, mu_hat_flat)
 
     if graft_type == 1:
-      diag = jax.tree_map(lambda g, d:  # pylint: disable=g-long-lambda
-                          jax.vmap(_update_moment_vmap(g, d, beta2, 2)),
-                          updates_hat, diag)
+      update_moment_vmap = jax.vmap(functools.partial(_update_moment_vmap,
+                                                      decay=beta2, order=2))
+      diag = jax.tree_map(lambda g, d:
+                          update_moment_vmap(g, d), updates_hat, diag)
       adam_updates = jax.tree_map(lambda m, v: m / (jnp.sqrt(v) +  graft_eps),
                                   mu_hat_flat, diag)
-      updates = jax.tree_map(lambda u, au: jax.vmap(graft_adam(u, au)),
+      updates = jax.tree_map(lambda u, au: graft_adam_vmap(u, au),
                              updates, adam_updates)
 
     # reshape them to the original param shapes
     updates = jax.tree_map(
-        lambda mf, m: mf.reshape(m.T.shape).T  # pylint: disable=g-long-lambda
+        lambda mf, m: mf.reshape(m.T.shape).T
         if transpose else mf.reshape(m.shape), updates, params)
     # adam_updates = jax.tree_map(
-    #     lambda mf, m: mf.reshape(m.T.shape).T  # pylint: disable=g-long-lambda
+    #     lambda mf, m: mf.reshape(m.T.shape).T
     #     if transpose else mf.reshape(m.shape), adam_updates, params)
     # updates = jax.tree_map(lambda u, au: au if len(u.shape) <= 1 else u,
     #                        updates, adam_updates)
+    # print("updates:", updates)
     return updates, PreconditionTriDiagonalState(
         count=count, mu=mu, nu_e=nu_e, nu_d=nu_d, diag=diag)
 
   return optax.GradientTransformation(init_fn, update_fn)
 
-
 def tds(learning_rate: ScalarOrSchedule,
         beta1: float = 0.9,
         beta2: float = 0.99,
         eps: float = 1e-8,
-        graft_type: int = 0,
+        graft_type: int = 1,
         graft_eps: float = 1e-8,
         weight_decay: float = 0.0,
         transpose: bool = True) -> optax.GradientTransformation:
@@ -281,8 +305,6 @@ def precondition_by_bds(beta1: float = 0.9,
 
     count = state.count + jnp.array(1, dtype=jnp.int32)
 
-    # lams = jax.tree_map(lambda d, g: jnp.sqrt(jnp.sum(d))+1e-16, state.nu_d,
-    #                     updates_hat)
     # lams = jax.tree_map(lambda d, g: jnp.linalg.norm(g)+1e-16, state.nu_d,
     #                     updates_hat)
     lams = jax.tree_map(lambda d, g: 1, state.nu_d, updates_hat)
@@ -339,4 +361,3 @@ def bds(learning_rate: ScalarOrSchedule,
       optax.add_decayed_weights(weight_decay),
       scale_by_learning_rate(learning_rate),
   )
-
