@@ -306,6 +306,129 @@ def GENP_jax(a, b):
   return x.reshape((batches, -1, 1))
 
 
+def solve_quad_eq(a, b, c, sig21):
+  # input a, b, c are scalars, and sig21 a vector
+  # eq to solve is ax^2 + bx + c
+  # we'll take the solution depending on if sig21[-1]>=-b or not
+  d = jnp.sqrt(b**2 - (4*a*c))
+  d = jnp.where(sig21[-1] >= -b, d, -d)
+  return (-b+d)/(2*a)
+
+
+def new_genp(sig21, sig22, d):
+  """Gaussian elimination with reweighing of edges if condcov<=0.
+
+  Args:
+   sig21: is batches x b vector, will play the role of "b_" in Ax=b_
+   sig22: is n x (bxb) matrices, will play the rolw of "A" in Ax=b_
+   d: diagonal statistics
+  Returns:
+   (condcov, sig21): final conditional covariance and sig21
+  """
+  diagsig22 = jnp.diagonal(sig22, axis1=1, axis2=2)
+  def m_bmm(x):
+    # return x
+    return jnp.broadcast_to(jnp.expand_dims(1/diagsig22, axis=-1), x.shape)*x
+  a = m_bmm(sig22)
+  b = m_bmm(jnp.expand_dims(sig21, axis=-1))
+  z = jnp.zeros(b.shape, dtype=b.dtype)
+  z_orig = z.at[:, -1, 0].set(1.0)
+  z = m_bmm(z_orig)
+
+  n = a.shape[1]
+  orig_a = a
+  mach_eps = jnp.finfo(orig_a.dtype).eps
+  for pivot_row in range(n-1):
+    for row in range(pivot_row+1, n):
+      den = a[:, pivot_row, pivot_row]
+      den = jnp.where(den == 0, mach_eps*orig_a[:, pivot_row, pivot_row], den)
+      a = a.at[:, pivot_row, pivot_row].set(den)
+      multiplier = a[:, row, pivot_row]/den
+      multiplier = multiplier.reshape(-1, 1)
+      a = a.at[:, row, pivot_row:].set(a[:, row, pivot_row:]-
+                                       multiplier*a[:, pivot_row, pivot_row:])
+      b = b.at[:, row].set(b[:, row] - multiplier*b[:, pivot_row])
+  batches = a.shape[0]
+  def back_substitution(a, b):
+    x = jnp.zeros((batches, n), dtype=a.dtype)
+    k = n-1
+    den = a[:, k, k].reshape(-1, 1)
+    temp = b[:, k] / den
+    temp = temp.reshape(-1)
+    x = x.at[:, k].set(temp)
+    k = k-1
+    while k >= 0:
+      first = a[:, k, k+1:].reshape((batches, 1, -1))
+      second = x[:, k+1:].reshape((batches, -1, 1))
+      second_term = jnp.matmul(first, second)
+      temp = second_term.reshape(-1)
+      den = a[:, k, k].reshape(-1)
+      x = x.at[:, k].set((b[:, k].reshape(-1) - temp.reshape(-1))/den)
+      k = k-1
+    return x.reshape((batches, -1))
+
+  k = n-1
+  a = a.at[:, k, k].set(jnp.where(a[:, k, k] == 0, mach_eps*orig_a[:, k, k],
+                                  a[:, k, k]))
+  x = back_substitution(a, b)
+  y = back_substitution(a, z)
+
+  psisig21 = jnp.matmul(x.reshape((batches, 1, -1)),
+                        sig21.reshape((batches, -1, 1))).squeeze(-1).squeeze(-1)
+  condcov = d - psisig21
+  temp = 2 * (jnp.matmul(y[:, :-1].reshape((batches, 1, -1)),
+                         sig21[:, :-1].reshape((batches, -1, 1))).reshape(-1) *
+              sig21[:, -1])
+  temp += y[:, -1]*(sig21[:, -1]**2)
+  temp = d - temp.reshape(-1) - condcov
+  solve_quad_eq_vmap = jax.vmap(solve_quad_eq)
+  temp = solve_quad_eq_vmap(
+      y[:, -1],
+      2*jnp.matmul(y[:, :-1].reshape((batches, 1, -1)),
+                   sig21[:, :-1].reshape((batches, -1, 1))).reshape(-1),
+      temp-(1-mach_eps)*d,
+      sig21)
+  print("temp shape and val:", temp.shape, temp)
+  tilde_sig21 = sig21.at[:, -1].set(temp.reshape(-1))
+  print("sig21:", sig21)
+  print("tilde_sig21:", tilde_sig21)
+  b_hat = b.at[:, -1, 0].set(tilde_sig21[:, -1]/diagsig22[:, -1] -
+                             sig21[:, -1]/diagsig22[:, -1] + b[:, -1, 0])
+  x_hat = back_substitution(a, b_hat)
+  # tilde_psisig21 = jnp.matmul(x_hat.reshape((batches, 1, -1)),
+  #                             tilde_sig21.reshape((batches, -1, 1)))
+  # tilde_psisig21 = tilde_psisig21.squeeze(-1).squeeze(-1)
+  # tilde_condcov = d - tilde_psisig21
+  tilde_condcov = mach_eps*d
+  return jnp.where(condcov.reshape((-1, 1)) <= 0,
+                   jnp.concatenate((tilde_condcov.reshape((-1, 1)), x_hat),
+                                   axis=1),
+                   jnp.concatenate((condcov.reshape((-1, 1)), x), axis=1))
+  # return jnp.where(condcov <= 0, (tilde_condcov, x_hat), (condcov, x))
+
+
+def bandedInv(sd, subdiags, eps, innerIters):
+  # given diagonal-Sd and subdiagonals-subDiags
+  # find the inverse of pd completion of this banded matrix
+  # interms of Ldiag(D)L^T decomposition
+  # outputs Lsub and D, where Lsub-subdiagonals of L
+
+  n = sd.shape[0]
+  b = subdiags.shape[1]
+
+  bandvecs = jnp.concatenate((sd.reshape(-1, 1), subdiags), axis=1)
+  epsmat = jnp.zeros((b, b+1), dtype=sd.dtype)
+  epsmat = epsmat.at[:, 0].set(eps)
+  bandwindows = jnp.concatenate((bandvecs, epsmat), axis=0)
+  sig_full = get_band_pencil(bandwindows, n, b)
+  sig22 = sig_full[:, 1:, 1:]
+  sig21 = sig_full[:, 1:, 0]
+  temp = new_genp(sig21, sig22, sd)
+  condcov = temp[:, 0].reshape(-1)
+  psi = temp[:, 1:]
+  return psi.astype(sd.dtype), 1/condcov.astype(sd.dtype)
+
+'''
 def bandedInv(Sd,subDiags,ind,eps,innerIters):
   # given diagonal-Sd and subdiagonals-subDiags
   # find the inverse of pd completion of this banded matrix
@@ -338,21 +461,21 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
   condCov = Sd - psiSig21
 
   ################# Edge Removal Start ################
-  '''
-  condCovFail = (condCov<=0.0078*Sd).reshape((-1,1))
-  # condCovFail = (condCov<=1e-7*Sd).reshape((-1,1))
-  condCovFail = jnp.broadcast_to(condCovFail, (condCovFail.shape[0], b))
-  condCovFail = condCovFail.at[:-1,0].set(jnp.logical_or(condCovFail[:-1,0],
-                                                          condCovFail[1:,0]))
-  for i in range(1, b):
-    condCovFail = condCovFail.at[:-(i+1),i].set(
-        jnp.logical_or(condCovFail[:-(i+1), i], condCovFail[1:-(i), i-1]))
+  
+  # condCovFail = (condCov<=0.0078*Sd).reshape((-1,1))
+  # # condCovFail = (condCov<=1e-7*Sd).reshape((-1,1))
+  # condCovFail = jnp.broadcast_to(condCovFail, (condCovFail.shape[0], b))
+  # condCovFail = condCovFail.at[:-1,0].set(jnp.logical_or(condCovFail[:-1,0],
+  #                                                         condCovFail[1:,0]))
+  # for i in range(1, b):
+  #   condCovFail = condCovFail.at[:-(i+1),i].set(
+  #       jnp.logical_or(condCovFail[:-(i+1), i], condCovFail[1:-(i), i-1]))
 
-  psi = jnp.where(condCovFail, 0.0, psi)
-  psiSig21 = jnp.matmul(psi.reshape((n, 1, b)), sig21.reshape((n, b, 1)))
-  psiSig21 = psiSig21.squeeze(-1).squeeze(-1)
-  condCov = Sd - psiSig21
-  '''
+  # psi = jnp.where(condCovFail, 0.0, psi)
+  # psiSig21 = jnp.matmul(psi.reshape((n, 1, b)), sig21.reshape((n, b, 1)))
+  # psiSig21 = psiSig21.squeeze(-1).squeeze(-1)
+  # condCov = Sd - psiSig21
+  
   def cond(arguments):
     condCov, psi, psiSig21 = arguments
     return jnp.any((condCov <= 0.0078*Sd))
@@ -380,6 +503,7 @@ def bandedInv(Sd,subDiags,ind,eps,innerIters):
   ################## Edge Removal End ###############
   D = 1/(condCov)
   return psi.astype(Sd.dtype), D.astype(Sd.dtype)
+'''
 
 def bandedMult(psi, D, vecv):
   normalize = jnp.ones_like(D)
@@ -406,7 +530,10 @@ def getl1norm(Sd, Se):
 
 def bandedUpdates(Sd, subDiags, ind, eps, innerIters, mu):
   l1norm = getl1norm(Sd, subDiags)
-  psi, D = bandedInv(Sd+(eps*l1norm), subDiags, ind, eps, innerIters)
+  min_eps = 1e-16
+  # psi, D = bandedInv(Sd+(eps*l1norm), subDiags, ind, eps, innerIters)
+  psi, D = bandedInv(Sd+jnp.maximum(eps * l1norm, min_eps),
+                     subDiags, eps, innerIters=-1)
   return bandedMult(psi, D, mu)
 
 def createInd(n,b):
