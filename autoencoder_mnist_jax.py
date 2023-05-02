@@ -18,13 +18,14 @@ from typing import (Any, List)
 #from custom_optimizer import *
 import custom_optimizer as custom_optimizer
 import shampoo_optax as shampoo_optax
+from rfdson import rfdson
 
 
 flags.DEFINE_float('beta1', 0.9, help='Beta1')
 flags.DEFINE_float('beta2', 0.999, help='Beta2')
-flags.DEFINE_float('lr', 0.0001, help='Learning rate')
-flags.DEFINE_float('eps', 1e-8, help='eps')
-flags.DEFINE_float('graft_eps', 4.31305e-6, help='eps')
+flags.DEFINE_float('lr', 0.001, help='Learning rate')
+flags.DEFINE_float('eps', 1e-4, help='eps')
+flags.DEFINE_float('graft_eps', 1e-8, help='eps')
 flags.DEFINE_integer('batch_size',
                      1000, help='Batch size.')
 flags.DEFINE_integer('model_size_multiplier',
@@ -33,12 +34,12 @@ flags.DEFINE_integer('model_depth_multiplier',
                      1, help='Multiply model depth by a constant')
 flags.DEFINE_integer('warmup_epochs', 5, help='Warmup epochs')
 flags.DEFINE_integer('epochs', 100, help='#Epochs')
-flags.DEFINE_integer('graft_type', 0, help='Graft_type, 1=adam, 2=norm_rmsprop')
+flags.DEFINE_integer('graft_type', 1, help='Graft_type, 1=adam, 2=norm_rmsprop')
 flags.DEFINE_integer('t', 1, help='preconditioner computation frequency')
 flags.DEFINE_integer('b', 4, help='preconditioner computation frequency')
-flags.DEFINE_enum('dtype', 'bfloat16', ['float32', 'bfloat16'], help='dtype')
-flags.DEFINE_enum('optimizer', 'bds', ['sgd', 'momentum', 'nesterov', 'adagrad',
-  'rmsprop', 'tds', 'shampoo', 'diag_sonew', 'bds'], help='optimizer')
+flags.DEFINE_enum('dtype', 'float32', ['float32', 'bfloat16'], help='dtype')
+flags.DEFINE_enum('optimizer', 'rfdson', ['sgd', 'momentum', 'nesterov', 'adagrad',
+  'rmsprop', 'tds', 'shampoo', 'diag_sonew', 'bds', 'rfdson'], help='optimizer')
 FLAGS = flags.FLAGS
 
 
@@ -92,6 +93,8 @@ def get_optimizer(opt, learning_rate):
   elif opt=="bds":
     return custom_optimizer.bds(learning_rate, beta1=FLAGS.beta1, beta2=FLAGS.beta2, eps=FLAGS.eps, graft_eps=FLAGS.graft_eps,
       weight_decay=0.0, b=FLAGS.b, transpose=True, graft_type=FLAGS.graft_type)
+  elif opt=="rfdson":
+    return rfdson(learning_rate, beta1=FLAGS.beta1, m=6)
   elif opt=="shampoo":
     return shampoo_optax.distributed_shampoo(
       learning_rate=learning_rate,
