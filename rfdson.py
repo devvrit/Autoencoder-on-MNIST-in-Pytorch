@@ -80,6 +80,7 @@ def precondition_by_rfdson(beta1: float = 0.9,
       jnp.eye(b_.shape[0]) + jnp.matmul(b_, b_.T)/a), jnp.matmul(b_, g) )))/(a**2),
       mu, alpha, b
     )
+    updates = jax.tree_map(lambda u, g: u.reshape(g.shape), update, updates)
     return updates, PreconditionRfdSONState(count, mu, b, alpha)
 
   return optax.GradientTransformation(init_fn, update_fn)

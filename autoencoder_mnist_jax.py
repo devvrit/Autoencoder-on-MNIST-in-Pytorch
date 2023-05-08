@@ -23,7 +23,7 @@ from rfdson import rfdson
 
 flags.DEFINE_float('beta1', 0.9, help='Beta1')
 flags.DEFINE_float('beta2', 0.999, help='Beta2')
-flags.DEFINE_float('lr', 0.001, help='Learning rate')
+flags.DEFINE_float('lr', 10.0, help='Learning rate')
 flags.DEFINE_float('eps', 1e-4, help='eps')
 flags.DEFINE_float('graft_eps', 1e-8, help='eps')
 flags.DEFINE_integer('batch_size',
@@ -94,7 +94,7 @@ def get_optimizer(opt, learning_rate):
     return custom_optimizer.bds(learning_rate, beta1=FLAGS.beta1, beta2=FLAGS.beta2, eps=FLAGS.eps, graft_eps=FLAGS.graft_eps,
       weight_decay=0.0, b=FLAGS.b, transpose=True, graft_type=FLAGS.graft_type)
   elif opt=="rfdson":
-    return rfdson(learning_rate, beta1=FLAGS.beta1, m=6)
+    return rfdson(learning_rate, beta1=FLAGS.beta1, m=50)
   elif opt=="shampoo":
     return shampoo_optax.distributed_shampoo(
       learning_rate=learning_rate,
